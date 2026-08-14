@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Legal Document Clause Extractor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,500&family=Source+Serif+4:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#1F2A38;
+    --ink-soft:#4A5568;
+    --folder:#D8C285;
+    --folder-dark:#C2A85F;
+    --paper:#F3ECD3;
+    --paper-light:#FAF6E7;
+    --redline:#A6362A;
+    --redline-bg:#F3E0DB;
+    --stamp:#3C6142;
+    --stamp-bg:#DEE8DC;
+    --seal:#93691F;
+    --seal-bg:#F1E4C4;
+    --rule:#C7B583;
+    --shadow:0 2px 10px rgba(31,42,56,0.12);
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--folder);font-family:'Source Serif 4',serif;color:var(--ink);}
+  .app{max-width:1080px;margin:0 auto;padding:0 0 4rem;}
+
+  /* ---- folder tab header ---- */
+  .tabrow{display:flex;align-items:flex-end;gap:6px;padding:22px 32px 0;}
+  .tab{background:var(--folder-dark);border-radius:10px 10px 0 0;padding:9px 22px;font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.08em;color:#4A3C10;text-transform:uppercase;}
+  .tab.active{background:var(--paper-light);color:var(--ink);font-weight:600;}
+
+  header.masthead{background:var(--paper-light);border-radius:0 10px 10px 10px;padding:30px 34px 24px;box-shadow:var(--shadow);position:relative;overflow:hidden;}
+  header.masthead::before{content:"";position:absolute;left:0;top:0;bottom:0;width:6px;background:var(--redline);}
+  .case-no{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--ink-soft);letter-spacing:.06em;margin:0 0 10px;}
+  h1{font-family:'Fraunces',serif;font-weight:600;font-size:34px;margin:0 0 8px;line-height:1.15;}
+  .sub{font-size:16px;color:var(--ink-soft);margin:0;max-width:58ch;line-height:1.55;}
+
+  main{display:grid;grid-template-columns:1.05fr 0.95fr;gap:20px;padding:20px 32px 0;align-items:start;}
+  @media(max-width:820px){main{grid-template-columns:1fr;}}
+
+  .panel{background:var(--paper-light);border-radius:10px;box-shadow:var(--shadow);padding:24px 26px;position:relative;}
+  .panel h2{font-family:'Fraunces',serif;font-weight:500;font-size:15px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-soft);margin:0 0 14px;display:flex;align-items:center;justify-content:space-between;}
+
+  textarea{width:100%;min-height:360px;resize:vertical;border:1px solid var(--rule);border-radius:6px;background:
+    repeating-linear-gradient(var(--paper) 0px, var(--paper) 27px, #E4D9AE 28px);
+    background-color:var(--paper);
+    padding:12px 14px;font-family:'Source Serif 4',serif;font-size:15px;line-height:28px;color:var(--ink);outline:none;}
+  textarea:focus{border-color:var(--redline);}
+
+  .doc-view{white-space:pre-wrap;font-size:15px;line-height:1.85;border:1px solid var(--rule);border-radius:6px;background:var(--paper);padding:16px 18px;max-height:460px;overflow:auto;}
+  .doc-view mark{background:transparent;border-radius:3px;padding:0 2px;cursor:pointer;box-decoration-break:clone;-webkit-box-decoration-break:clone;transition:background .15s;}
+  .doc-view mark.cat-termination{background:#EBD0CB;border-bottom:2px solid var(--redline);}
+  .doc-view mark.cat-payment{background:#D3E2D6;border-bottom:2px solid var(--stamp);}
+  .doc-view mark.cat-penalties{background:#EBDCB9;border-bottom:2px solid var(--seal);}
+  .doc-view mark.cat-other{background:#DDE1E8;border-bottom:2px solid #5A6B84;}
+  .doc-view mark.focus{outline:2px solid var(--ink);}
+
+  .btnrow{display:flex;gap:10px;margin-top:16px;align-items:center;}
+  button.primary{background:var(--ink);color:var(--paper-light);border:none;border-radius:6px;padding:11px 20px;font-family:'JetBrains Mono',monospace;font-size:12.5px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;}
+  button.primary:hover{background:#31405A;}
+  button.primary:disabled{background:#9AA3AF;cursor:not-allowed;}
+  button.ghost{background:transparent;border:1px solid var(--rule);color:var(--ink-soft);border-radius:6px;padding:10px 16px;font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:.05em;cursor:pointer;}
+  button.ghost:hover{border-color:var(--ink-soft);color:var(--ink);}
+  .hint{font-size:12.5px;color:var(--ink-soft);margin-top:8px;}
+  .upload-row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:14px;padding:12px 14px;border:1px dashed var(--rule);border-radius:8px;background:rgba(250,246,231,.72);}
+  .upload-chip{display:inline-flex;align-items:center;gap:8px;background:var(--stamp-bg);color:var(--stamp);border:1px solid rgba(60,97,66,.24);border-radius:999px;padding:8px 12px;font-family:'JetBrains Mono',monospace;font-size:11.5px;letter-spacing:.05em;text-transform:uppercase;cursor:pointer;}
+  .upload-chip input{display:none;}
+  .file-name{font-size:12.5px;color:var(--ink-soft);word-break:break-word;}
+
+  /* ---- docket / results ---- */
+  .empty-docket{text-align:center;padding:50px 14px;color:var(--ink-soft);}
+  .empty-docket .glyph{font-family:'Fraunces',serif;font-size:38px;color:var(--rule);margin-bottom:10px;}
+  .empty-docket p{font-size:14px;line-height:1.6;margin:0 auto;max-width:34ch;}
+
+  .legend{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:16px;}
+  .legend span{font-size:11.5px;font-family:'JetBrains Mono',monospace;color:var(--ink-soft);display:flex;align-items:center;gap:6px;}
+  .dot{width:9px;height:9px;border-radius:50%;display:inline-block;}
+  .dot.termination{background:var(--redline);} .dot.payment{background:var(--stamp);} .dot.penalties{background:var(--seal);} .dot.other{background:#5A6B84;}
+
+  .clause{border:1px solid var(--rule);border-left:5px solid var(--ink-soft);border-radius:0 8px 8px 0;background:var(--paper);padding:14px 16px;margin-bottom:12px;cursor:pointer;transition:transform .1s;}
+  .clause:hover{transform:translateX(2px);}
+  .clause.termination{border-left-color:var(--redline);}
+  .clause.payment{border-left-color:var(--stamp);}
+  .clause.penalties{border-left-color:var(--seal);}
+  .clause.other{border-left-color:#5A6B84;}
+  .clause-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:6px;}
+  .clause-tag{font-family:'JetBrains Mono',monospace;font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;padding:3px 8px;border-radius:4px;}
+  .clause-tag.termination{background:var(--redline-bg);color:var(--redline);}
+  .clause-tag.payment{background:var(--stamp-bg);color:var(--stamp);}
+  .clause-tag.penalties{background:var(--seal-bg);color:var(--seal);}
+  .clause-tag.other{background:#E1E4EA;color:#3C4A61;}
+  .clause-idx{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-soft);}
+  .clause h3{font-family:'Fraunces',serif;font-size:16px;font-weight:500;margin:0 0 6px;}
+  .clause p{font-size:13.5px;line-height:1.55;color:var(--ink-soft);margin:0;}
+
+  .stamp-badge{position:absolute;top:18px;right:18px;border:2.5px solid var(--redline);color:var(--redline);font-family:'JetBrains Mono',monospace;font-weight:600;font-size:12px;letter-spacing:.1em;padding:6px 12px;border-radius:4px;transform:rotate(-6deg);opacity:0;text-transform:uppercase;}
+  .stamp-badge.show{opacity:.85;animation:stampin .28s ease-out;}
+  @keyframes stampin{from{transform:rotate(-6deg) scale(1.6);opacity:0;}to{transform:rotate(-6deg) scale(1);opacity:.85;}}
+
+  .error-box{border:1px solid var(--redline);background:var(--redline-bg);color:var(--redline);border-radius:6px;padding:12px 14px;font-size:13.5px;margin-top:14px;}
+  .loading{display:flex;align-items:center;gap:10px;color:var(--ink-soft);font-size:13.5px;margin-top:14px;font-family:'JetBrains Mono',monospace;}
+  .spinner{width:14px;height:14px;border:2px solid var(--rule);border-top-color:var(--ink);border-radius:50%;animation:spin .7s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+
+  .count-badge{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-soft);}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="tabrow">
+    <div class="tab active">Exhibit A</div>
+    <div class="tab">Docket</div>
+  </div>
+  <header class="masthead">
+    <p class="case-no" id="caseNo">CASE FILE NO. —</p>
+    <h1>Legal Document Clause Extractor</h1>
+    <p class="sub">Scans contracts and pulls out specific clauses such as termination, payment terms, and penalties automatically.</p>
+  </header>
+
+  <main>
+    <section class="panel">
+      <h2><span>Contract text</span><span class="count-badge" id="wordCount"></span></h2>
+      <textarea id="input" placeholder="Paste the full contract text here...">This Master Services Agreement ("Agreement") is entered into by and between Northbridge Analytics, Inc. ("Provider") and Halyard Consumer Goods, LLC ("Client") as of the Effective Date.
+
+1. Term and Termination. This Agreement shall commence on the Effective Date and continue for an initial term of twenty-four (24) months. Either party may terminate this Agreement for convenience upon ninety (90) days' prior written notice. Provider may terminate immediately upon Client's failure to cure a material breach within fifteen (15) days of written notice thereof.
+
+2. Fees and Payment Terms. Client shall pay Provider a monthly fee of $18,500, invoiced on the first business day of each month. Payment is due within thirty (30) days of the invoice date. Any undisputed amount not paid within thirty (30) days shall accrue interest at a rate of 1.5% per month.
+
+3. Late Payment Penalties. In the event Client fails to remit payment within forty-five (45) days of the invoice date, Provider may suspend Services without further notice and Client shall be liable for a late fee equal to 5% of the outstanding balance, in addition to accrued interest.
+
+4. Limitation of Liability. Neither party's aggregate liability arising out of this Agreement shall exceed the total fees paid in the twelve (12) months preceding the claim.
+
+5. Early Termination Fee. Should Client terminate this Agreement for convenience prior to the completion of the initial term, Client shall pay an early termination fee equal to 50% of the remaining contract value.</textarea>
+      <div class="btnrow">
+        <button class="primary" id="extractBtn">Extract clauses</button>
+        <button class="ghost" id="clearBtn">Clear</button>
+      </div>
+      <div class="upload-row">
+        <label class="upload-chip" for="fileInput">Upload file</label>
+        <input id="fileInput" type="file" accept=".txt,.md,.pdf,.docx,.html,.htm" style="display:none;">
+        <span class="file-name" id="fileName">No file selected</span>
+      </div>
+      <p class="hint">Analysis runs on pasted text or uploaded files — nothing is stored.</p>
+      <div id="statusArea"></div>
+    </section>
+
+    <section class="panel" style="position:relative;">
+      <div class="stamp-badge" id="stampBadge">Extracted</div>
+      <h2><span>Extracted clauses</span><span class="count-badge" id="clauseCount"></span></h2>
+      <div id="legend" class="legend" style="display:none;">
+        <span><i class="dot termination"></i>Termination</span>
+        <span><i class="dot payment"></i>Payment terms</span>
+        <span><i class="dot penalties"></i>Penalties</span>
+        <span><i class="dot other"></i>Other</span>
+      </div>
+      <div id="docket">
+        <div class="empty-docket">
+          <div class="glyph">§</div>
+          <p>Nothing extracted yet. Paste a contract on the left and choose "Extract clauses" to build the docket.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+const inputEl = document.getElementById('input');
+const extractBtn = document.getElementById('extractBtn');
+const clearBtn = document.getElementById('clearBtn');
+const fileInput = document.getElementById('fileInput');
+const fileNameEl = document.getElementById('fileName');
+const statusArea = document.getElementById('statusArea');
+const docket = document.getElementById('docket');
+const legend = document.getElementById('legend');
+const clauseCountEl = document.getElementById('clauseCount');
+const wordCountEl = document.getElementById('wordCount');
+const stampBadge = document.getElementById('stampBadge');
+const caseNoEl = document.getElementById('caseNo');
+const API_BASE = location.protocol === 'file:' ? 'http://localhost:3000' : '';
+const API_URL = API_BASE + '/api/extract';
+
+const today = new Date();
+caseNoEl.textContent = 'CASE FILE NO. ' + today.getFullYear() + '-' + String(today.getMonth()+1).padStart(2,'0') + String(today.getDate()).padStart(2,'0') + ' \u2022 SCANNED ' + today.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+
+function updateWordCount(){
+  const n = inputEl.value.trim().split(/\s+/).filter(Boolean).length;
+  wordCountEl.textContent = inputEl.value.trim() ? n + ' words' : '';
+}
+inputEl.addEventListener('input', updateWordCount);
+updateWordCount();
+
+const CATS = {
+  termination: 'Termination',
+  payment: 'Payment terms',
+  penalties: 'Penalties',
+  other: 'Other'
+};
+
+function escapeHtml(s){
+  return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function normCategory(raw){
+  const r = (raw||'').toLowerCase();
+  if(r.includes('termin')) return 'termination';
+  if(r.includes('pay')) return 'payment';
+  if(r.includes('penalt') || r.includes('fee') || r.includes('interest')) return 'penalties';
+  return 'other';
+}
+
+function buildDocView(text, clauses){
+  let markers = [];
+  clauses.forEach((c, i) => {
+    const idx = text.indexOf(c.excerpt);
+    if(idx !== -1){
+      markers.push({start: idx, end: idx + c.excerpt.length, cat: c.category, id: i});
+    }
+  });
+  markers.sort((a,b)=>a.start-b.start);
+  const filtered = [];
+  let lastEnd = -1;
+  markers.forEach(m => { if(m.start >= lastEnd){ filtered.push(m); lastEnd = m.end; } });
+
+  let html = '';
+  let pos = 0;
+  filtered.forEach(m => {
+    html += escapeHtml(text.slice(pos, m.start));
+    html += '<mark class="cat-' + m.cat + '" data-idx="' + m.id + '">' + escapeHtml(text.slice(m.start, m.end)) + '</mark>';
+    pos = m.end;
+  });
+  html += escapeHtml(text.slice(pos));
+  return html;
+}
+
+function renderDocket(text, clauses){
+  legend.style.display = 'flex';
+  clauseCountEl.textContent = clauses.length + (clauses.length===1 ? ' clause' : ' clauses');
+
+  const docHtml = '<div class="doc-view" id="docView">' + buildDocView(text, clauses) + '</div>';
+
+  const cardsHtml = clauses.map((c, i) => {
+    const cat = normCategory(c.category);
+    return '<div class="clause ' + cat + '" data-idx="' + i + '">' +
+      '<div class="clause-top">' +
+        '<span class="clause-tag ' + cat + '">' + (CATS[cat]) + '</span>' +
+        '<span class="clause-idx">' + (c.section ? c.section : '\u00a7 ' + (i+1)) + '</span>' +
+      '</div>' +
+      '<h3>' + escapeHtml(c.title || CATS[cat]) + '</h3>' +
+      '<p>' + escapeHtml(c.summary || '') + '</p>' +
+    '</div>';
+  }).join('');
+
+  docket.innerHTML = docHtml + '<div style="margin-top:18px;">' + cardsHtml + '</div>';
+
+  document.querySelectorAll('.clause').forEach(el => {
+    el.addEventListener('click', () => {
+      const idx = el.getAttribute('data-idx');
+      document.querySelectorAll('.doc-view mark').forEach(m => m.classList.remove('focus'));
+      const mark = document.querySelector('.doc-view mark[data-idx="' + idx + '"]');
+      if(mark){
+        mark.classList.add('focus');
+        mark.scrollIntoView({behavior:'smooth', block:'center'});
+      }
+    });
+  });
+}
+
+function localExtractClauses(text){
+  const normalized = String(text || '').replace(/\r\n/g, '\n').replace(/\s+\n\s+/g, '\n').trim();
+  if(!normalized) return [];
+
+  const segments = normalized.split(/\n\s*\n+|(?=\b(?:Section|\d+[.)]|[A-Z][A-Za-z0-9&/() -]{5,}:))/).map(s => s.trim()).filter(Boolean);
+  const clauses = [];
+
+  for (const segment of segments) {
+    const lower = segment.toLowerCase();
+    let category = 'other';
+
+    if (/termination|terminate|breach|cure|notice|expiry|renewal|convenience/.test(lower)) {
+      category = 'termination';
+    } else if (/payment|invoice|fee|fees|billing|remit|due|monthly|interest/.test(lower)) {
+      category = 'payment';
+    } else if (/penalt|late fee|liquidated damages|suspend|default|non-payment/.test(lower)) {
+      category = 'penalties';
+    }
+
+    if (!/payment|termination|penalt|liability|indemn|confidential|warranty|insurance|governing law|audit/.test(lower)) {
+      continue;
+    }
+
+    const titleMatch = segment.match(/(?:^|\n)(?:Section\s+\d+|\d+[.)])?\s*([^:.\n]{1,80})/i);
+    const title = (titleMatch && titleMatch[1] ? titleMatch[1].trim() : (category === 'termination' ? 'Termination clause' : category === 'payment' ? 'Payment terms' : category === 'penalties' ? 'Penalty clause' : 'Risk clause')).replace(/^[^A-Za-z]+/, '');
+
+    const summary = category === 'termination'
+      ? 'This clause explains when the agreement can be ended.'
+      : category === 'payment'
+        ? 'This clause sets the payment schedule, invoice timing, and any interest requirements.'
+        : category === 'penalties'
+          ? 'This clause imposes a fee, interest, or suspension consequence for non-compliance.'
+          : 'This clause allocates risk or financial responsibility between the parties.';
+
+    clauses.push({
+      category,
+      title: title || (category === 'termination' ? 'Termination clause' : category === 'payment' ? 'Payment terms' : 'Clause'),
+      summary,
+      section: segment.match(/^(Section\s+\d+|\d+[.)]|§\s*\d+)/i)?.[1] || 'Section ' + (clauses.length + 1),
+      excerpt: segment.slice(0, 220)
+    });
+  }
+
+  return clauses.length ? clauses : [];
+}
+
+function renderResultFromText(text, clauses){
+  if(!Array.isArray(clauses) || clauses.length === 0){
+    statusArea.innerHTML = '<div class="error-box">No termination, payment, or penalty clauses were found in this text.</div>';
+    docket.innerHTML = '<div class="empty-docket"><div class="glyph">\u00a7</div><p>No matching clauses found. Try pasting a longer excerpt of the contract.</p></div>';
+    legend.style.display = 'none';
+    clauseCountEl.textContent = '';
+    return;
+  }
+
+  statusArea.innerHTML = '';
+  renderDocket(text, clauses);
+  stampBadge.classList.add('show');
+}
+
+async function postForExtraction(formData, loadingMessage){
+  extractBtn.disabled = true;
+  stampBadge.classList.remove('show');
+  statusArea.innerHTML = '<div class="loading"><span class="spinner"></span>' + loadingMessage + '</div>';
+
+  try{
+    const response = await fetch(API_URL, {
+      method: 'POST',
+      body: formData
+    });
+
+    if(!response.ok){
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.error || ('Request failed with status ' + response.status));
+    }
+    const data = await response.json();
+    const clauses = data.clauses;
+    renderResultFromText(data.text || inputEl.value.trim(), clauses);
+  }catch(err){
+    const fallbackText = (formData.get('text') || '').toString().trim();
+    if(location.protocol === 'file:' && fallbackText){
+      const localClauses = localExtractClauses(fallbackText);
+      renderResultFromText(fallbackText, localClauses);
+      return;
+    }
+
+    const fileObj = formData.get('file');
+    if(location.protocol === 'file:' && fileObj && typeof fileObj === 'object' && fileObj.name){
+      const fileText = await fileObj.text().catch(() => '');
+      if(fileText){
+        const localClauses = localExtractClauses(fileText);
+        renderResultFromText(fileText, localClauses);
+        return;
+      }
+    }
+
+    statusArea.innerHTML = '<div class="error-box">Extraction failed: ' + escapeHtml(err.message) + '. Please try again.</div>';
+  }finally{
+    extractBtn.disabled = false;
+  }
+}
+
+async function extractClauses(){
+  const text = inputEl.value.trim();
+  if(!text){
+    statusArea.innerHTML = '<div class="error-box">Paste contract text before extracting.</div>';
+    return;
+  }
+  const formData = new FormData();
+  formData.append('text', text);
+  await postForExtraction(formData, 'Scanning document for clauses...');
+}
+
+async function extractFromFile(file){
+  if(location.protocol === 'file:' && file && file.name && !/\.(pdf|docx|html?|txt|md)$/i.test(file.name)){
+    statusArea.innerHTML = '<div class="error-box">This local file mode supports text-based files only. Use a .txt, .md, or .html file.</div>';
+    return;
+  }
+
+  if(location.protocol === 'file:'){
+    const text = await file.text().catch(() => '');
+    if(!text){
+      statusArea.innerHTML = '<div class="error-box">Could not read the selected file in local mode.</div>';
+      return;
+    }
+    const localClauses = localExtractClauses(text);
+    renderResultFromText(text, localClauses);
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append('file', file);
+  await postForExtraction(formData, 'Reading and scanning ' + file.name + '...');
+}
+
+extractBtn.addEventListener('click', extractClauses);
+fileInput.addEventListener('change', async () => {
+  const file = fileInput.files && fileInput.files[0];
+  if(!file){
+    fileNameEl.textContent = 'No file selected';
+    return;
+  }
+  fileNameEl.textContent = file.name;
+  try{
+    await extractFromFile(file);
+  }catch(err){
+    statusArea.innerHTML = '<div class="error-box">Extraction failed: ' + escapeHtml(err.message) + '. Please try another file.</div>';
+  }
+});
+clearBtn.addEventListener('click', () => {
+  inputEl.value = '';
+  updateWordCount();
+  statusArea.innerHTML = '';
+  legend.style.display = 'none';
+  clauseCountEl.textContent = '';
+  stampBadge.classList.remove('show');
+  fileInput.value = '';
+  fileNameEl.textContent = 'No file selected';
+  docket.innerHTML = '<div class="empty-docket"><div class="glyph">\u00a7</div><p>Nothing extracted yet. Paste a contract on the left and choose "Extract clauses" to build the docket.</p></div>';
+});
+</script>
+</body>
+</html>
