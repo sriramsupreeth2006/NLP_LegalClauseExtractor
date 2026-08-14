@@ -106,6 +106,11 @@
   @keyframes spin{to{transform:rotate(360deg);}}
 
   .count-badge{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-soft);}
+  .confidence{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--stamp);background:var(--stamp-bg);border-radius:4px;padding:2px 6px;}
+  .entities{margin-top:8px;display:flex;flex-wrap:wrap;gap:6px;}
+  .entity{font-family:'JetBrains Mono',monospace;font-size:10px;background:#ECE7D6;border:1px solid var(--rule);border-radius:999px;padding:3px 8px;color:var(--ink-soft);}
+  .nlp-meta{margin-top:14px;padding:12px 14px;border:1px solid var(--rule);border-radius:6px;background:rgba(250,246,231,.72);font-size:12.5px;color:var(--ink-soft);line-height:1.55;}
+  .nlp-meta strong{color:var(--ink);font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.04em;}
 </style>
 </head>
 <body>
@@ -117,7 +122,7 @@
   <header class="masthead">
     <p class="case-no" id="caseNo">CASE FILE NO. —</p>
     <h1>Legal Document Clause Extractor</h1>
-    <p class="sub">Scans contracts and pulls out specific clauses such as termination, payment terms, and penalties automatically.</p>
+    <p class="sub">NLP pipeline: spaCy tokenization &amp; NER + DistilBERT zero-shot classification to extract termination, payment, penalty, and risk clauses.</p>
   </header>
 
   <main>
@@ -143,7 +148,7 @@
         <input id="fileInput" type="file" accept=".txt,.md,.pdf,.docx,.html,.htm" style="display:none;">
         <span class="file-name" id="fileName">No file selected</span>
       </div>
-      <p class="hint">Analysis runs on pasted text or uploaded files — nothing is stored.</p>
+      <p class="hint">Analysis uses spaCy + DistilBERT on pasted text or uploaded files — nothing is stored.</p>
       <div id="statusArea"></div>
     </section>
 
@@ -243,13 +248,22 @@ function renderDocket(text, clauses){
 
   const cardsHtml = clauses.map((c, i) => {
     const cat = normCategory(c.category);
+    const confidence = typeof c.confidence === 'number'
+      ? '<span class="confidence">' + Math.round(c.confidence * 100) + '% NLP</span>'
+      : '';
+    const entities = Array.isArray(c.entities) && c.entities.length
+      ? '<div class="entities">' + c.entities.map(function(entity){
+          return '<span class="entity">' + escapeHtml(entity.label + ': ' + entity.text) + '</span>';
+        }).join('') + '</div>'
+      : '';
     return '<div class="clause ' + cat + '" data-idx="' + i + '">' +
       '<div class="clause-top">' +
         '<span class="clause-tag ' + cat + '">' + (CATS[cat]) + '</span>' +
-        '<span class="clause-idx">' + (c.section ? c.section : '\u00a7 ' + (i+1)) + '</span>' +
+        '<span class="clause-idx">' + (c.section ? c.section : '\u00a7 ' + (i+1)) + confidence + '</span>' +
       '</div>' +
       '<h3>' + escapeHtml(c.title || CATS[cat]) + '</h3>' +
       '<p>' + escapeHtml(c.summary || '') + '</p>' +
+      entities +
     '</div>';
   }).join('');
 
@@ -268,62 +282,28 @@ function renderDocket(text, clauses){
   });
 }
 
-function localExtractClauses(text){
-  const normalized = String(text || '').replace(/\r\n/g, '\n').replace(/\s+\n\s+/g, '\n').trim();
-  if(!normalized) return [];
-
-  const segments = normalized.split(/\n\s*\n+|(?=\b(?:Section|\d+[.)]|[A-Z][A-Za-z0-9&/() -]{5,}:))/).map(s => s.trim()).filter(Boolean);
-  const clauses = [];
-
-  for (const segment of segments) {
-    const lower = segment.toLowerCase();
-    let category = 'other';
-
-    if (/termination|terminate|breach|cure|notice|expiry|renewal|convenience/.test(lower)) {
-      category = 'termination';
-    } else if (/payment|invoice|fee|fees|billing|remit|due|monthly|interest/.test(lower)) {
-      category = 'payment';
-    } else if (/penalt|late fee|liquidated damages|suspend|default|non-payment/.test(lower)) {
-      category = 'penalties';
-    }
-
-    if (!/payment|termination|penalt|liability|indemn|confidential|warranty|insurance|governing law|audit/.test(lower)) {
-      continue;
-    }
-
-    const titleMatch = segment.match(/(?:^|\n)(?:Section\s+\d+|\d+[.)])?\s*([^:.\n]{1,80})/i);
-    const title = (titleMatch && titleMatch[1] ? titleMatch[1].trim() : (category === 'termination' ? 'Termination clause' : category === 'payment' ? 'Payment terms' : category === 'penalties' ? 'Penalty clause' : 'Risk clause')).replace(/^[^A-Za-z]+/, '');
-
-    const summary = category === 'termination'
-      ? 'This clause explains when the agreement can be ended.'
-      : category === 'payment'
-        ? 'This clause sets the payment schedule, invoice timing, and any interest requirements.'
-        : category === 'penalties'
-          ? 'This clause imposes a fee, interest, or suspension consequence for non-compliance.'
-          : 'This clause allocates risk or financial responsibility between the parties.';
-
-    clauses.push({
-      category,
-      title: title || (category === 'termination' ? 'Termination clause' : category === 'payment' ? 'Payment terms' : 'Clause'),
-      summary,
-      section: segment.match(/^(Section\s+\d+|\d+[.)]|§\s*\d+)/i)?.[1] || 'Section ' + (clauses.length + 1),
-      excerpt: segment.slice(0, 220)
-    });
-  }
-
-  return clauses.length ? clauses : [];
+function renderNlpMeta(meta){
+  if(!meta) return '';
+  const techniques = Array.isArray(meta.techniques) ? meta.techniques.join(' \u2022 ') : '';
+  return '<div class="nlp-meta"><strong>NLP pipeline</strong><br>' +
+    'Segments analyzed: ' + (meta.segment_count ?? '\u2014') + '<br>' +
+    'Classifier: ' + escapeHtml(meta.classifier_model || 'DistilBERT zero-shot') + '<br>' +
+    'Linguistics: ' + escapeHtml(meta.spacy_model || 'spaCy') + '<br>' +
+    (techniques ? 'Steps: ' + escapeHtml(techniques) : '') +
+    '</div>';
 }
 
-function renderResultFromText(text, clauses){
+function renderResultFromText(text, clauses, meta){
   if(!Array.isArray(clauses) || clauses.length === 0){
-    statusArea.innerHTML = '<div class="error-box">No termination, payment, or penalty clauses were found in this text.</div>';
+    statusArea.innerHTML = '<div class="error-box">No termination, payment, penalty, or risk clauses were detected by the NLP classifier.</div>' +
+      renderNlpMeta(meta);
     docket.innerHTML = '<div class="empty-docket"><div class="glyph">\u00a7</div><p>No matching clauses found. Try pasting a longer excerpt of the contract.</p></div>';
     legend.style.display = 'none';
     clauseCountEl.textContent = '';
     return;
   }
 
-  statusArea.innerHTML = '';
+  statusArea.innerHTML = renderNlpMeta(meta);
   renderDocket(text, clauses);
   stampBadge.classList.add('show');
 }
@@ -345,26 +325,10 @@ async function postForExtraction(formData, loadingMessage){
     }
     const data = await response.json();
     const clauses = data.clauses;
-    renderResultFromText(data.text || inputEl.value.trim(), clauses);
+    renderResultFromText(data.text || inputEl.value.trim(), clauses, data.nlp);
   }catch(err){
-    const fallbackText = (formData.get('text') || '').toString().trim();
-    if(location.protocol === 'file:' && fallbackText){
-      const localClauses = localExtractClauses(fallbackText);
-      renderResultFromText(fallbackText, localClauses);
-      return;
-    }
-
-    const fileObj = formData.get('file');
-    if(location.protocol === 'file:' && fileObj && typeof fileObj === 'object' && fileObj.name){
-      const fileText = await fileObj.text().catch(() => '');
-      if(fileText){
-        const localClauses = localExtractClauses(fileText);
-        renderResultFromText(fileText, localClauses);
-        return;
-      }
-    }
-
-    statusArea.innerHTML = '<div class="error-box">Extraction failed: ' + escapeHtml(err.message) + '. Please try again.</div>';
+    statusArea.innerHTML = '<div class="error-box">NLP extraction failed: ' + escapeHtml(err.message) +
+      '. Start the Python backend with <code>python app.py</code> and try again.</div>';
   }finally{
     extractBtn.disabled = false;
   }
@@ -382,25 +346,9 @@ async function extractClauses(){
 }
 
 async function extractFromFile(file){
-  if(location.protocol === 'file:' && file && file.name && !/\.(pdf|docx|html?|txt|md)$/i.test(file.name)){
-    statusArea.innerHTML = '<div class="error-box">This local file mode supports text-based files only. Use a .txt, .md, or .html file.</div>';
-    return;
-  }
-
-  if(location.protocol === 'file:'){
-    const text = await file.text().catch(() => '');
-    if(!text){
-      statusArea.innerHTML = '<div class="error-box">Could not read the selected file in local mode.</div>';
-      return;
-    }
-    const localClauses = localExtractClauses(text);
-    renderResultFromText(text, localClauses);
-    return;
-  }
-
   const formData = new FormData();
   formData.append('file', file);
-  await postForExtraction(formData, 'Reading and scanning ' + file.name + '...');
+  await postForExtraction(formData, 'Running NLP on ' + file.name + '...');
 }
 
 extractBtn.addEventListener('click', extractClauses);
