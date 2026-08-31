@@ -1,0 +1,15 @@
+Legal clause extractor
+
+Requirements:-
+1) pypdf for reading documents
+2) scikit learn
+
+pip install pypdf scikit-learn
+
+
+Step 1: Document Ingestion & Section Segmentation
+Step 2: Benchmark Dataset Loader & Ground-Truth Aligner
+Step 3: Feature Engineering & Text Vectorization Pipeline
+Step 4: Multi-Class Clause Classifier & Scorer
+Step 5: Information Extraction & Parameter Parser
+Step 6: CLI Runner & Visual Contract Report
