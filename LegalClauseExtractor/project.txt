@@ -12,4 +12,4 @@ Step 2: Benchmark Dataset Loader & Ground-Truth Aligner
 Step 3: Feature Engineering & Text Vectorization Pipeline
 Step 4: Multi-Class Clause Classifier & Scorer
 Step 5: Information Extraction & Parameter Parser
-Step 6: CLI Runner & Visual Contract Report
+Step 6: CLI Runner & Visual Contract Report 
