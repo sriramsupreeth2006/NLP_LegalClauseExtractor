@@ -1,139 +1,153 @@
-"""
-Step 1: Document Ingestion & Section Segmentation
-Reads PDF/TXT contracts, cleans layout artifacts, and segments text into sections.
-"""
-
 import re
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List
-
-try:
-    from pypdf import PdfReader
-except ImportError:
-    PdfReader = None
+from pypdf import PdfReader
 
 
 @dataclass
 class ContractSection:
-    section_id: int
     heading: str
-    text: str
+    body: str
     char_start: int
     char_end: int
 
 
-class ContractIngester:
-    # Matches numbered sections (e.g. "1. DEFINITIONS"), Articles/Clauses, or uppercase headings
-    HEADING_PATTERN = re.compile(
-        r"(?m)^(?:\s*(?:ARTICLE|SECTION|CLAUSE)\s+[0-9IVXLCDM]+[\.\:\-]?[^\n]*|"
-        r"\s*\d+\.\s+[A-Z\s]{2,50}|"
-        r"\s*[A-Z][A-Z\s]{3,50}(?:\:|\b))"
-    )
+class LegalDocumentIngester:
+    def __init__(self):
+        # 1. Privacy & Redaction Patterns (Entity names, identification numbers, artifacts)
+        self.redaction_rules = [
+            # 12-digit Indian national identity numbers
+            (r"\b\d{4}[ -]?\d{4}[ -]?\d{4}\b", "[ID_REDACTED]"),
+            # Tax identification / PAN codes
+            (r"\b[A-Z]{5}[0-9]{4}[A-Z]\b", "[TAX_ID_REDACTED]"),
+            # Corporate Identification Numbers (CIN)
+            (r"\b[UL][0-9]{5}[A-Z]{2}[0-9]{4}[A-Z]{3}[0-9]{6}\b", "[CIN_REDACTED]"),
+            # Phone / Contact numbers
+            (r"(?:\+91[\-\s]?)?[6-9]\d{9}\b", "[PHONE_REDACTED]"),
+            # Email addresses
+            (r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,7}\b", "[EMAIL_REDACTED]"),
+            # Scanner stamps, watermarks, and regulatory filing headers
+            (r"(?i)scanned\s+by\s+camscanner", ""),
+            (r"(?i)annexure\s*\[see\s*rule\s*\d+\]", ""),
+            # Enterprise, developer, and builder entities
+            (
+                r"(?i)\b[A-Z0-9\s,\.&]{3,50}\s+(?:CONSTRUCTIONS?|BUILDERS?|DEVELOPERS?|INFRASTRUCTURE|REALTORS?|PROJECTS?|PROPERTIES|ESTATES?|SOLUTIONS|SYSTEMS|CORP|INC|LIMITED|LTD|PVT\.?\s*LTD|LLP)\b",
+                "[ORGANIZATION_REDACTED]"
+            ),
+            # Named party representations (e.g., "represented by its partner John Doe")
+            (
+                r"(?i)(represented by\s+(?:its\s+)?(?:authorized\s+)?(?:signatory|partner|director|proprietor)?[\s,:]+)([A-Z][a-zA-Z\s\.]{2,35})(?=\s+(?:vide|having|hereinafter|aged|resident))",
+                r"\1[REPRESENTATIVE_REDACTED]"
+            ),
+            # Individual party names preceded by relational legal designations
+            (
+                r"(?i)(son\s+of|daughter\s+of|wife\s+of|mr\.|ms\.|mrs\.|sri|shri)\s+([A-Z][a-zA-Z\s\.]{2,35})(?=\s+(?:aged|residing|hereinafter|,|\.))",
+                r"\1 [INDIVIDUAL_REDACTED]"
+            ),
+        ]
 
-    def load_document(self, file_path: str) -> str:
-        path = Path(file_path)
-        if not path.exists():
-            raise FileNotFoundError(f"File not found: {file_path}")
+        # 2. Heading boundary regex for standard commercial and property contracts
+        # Handles patterns like: "1. TERMS:", "ARTICLE 1 APPOINTMENT", "7. POSSESSION", "9. EVENTS OF DEFAULTS"
+        self.heading_pattern = re.compile(
+            r"(?m)^(?:\s*(?:SECTION|CLAUSE|ARTICLE)?\s*(\d{1,2}(?:\.\d{1,2})*)\.?\s+([A-Z\s,/–\-]{3,65}?)(?::|\.|\n))"
+        )
 
-        if path.suffix.lower() == ".pdf":
-            if PdfReader is None:
-                raise ImportError("pypdf is required. Run: pip install pypdf")
-            reader = PdfReader(str(path))
-            pages_text = [page.extract_text() or "" for page in reader.pages]
-            raw_text = "\n\n".join(pages_text)
-        elif path.suffix.lower() in [".txt", ".text"]:
-            with open(path, "r", encoding="utf-8", errors="ignore") as f:
-                raw_text = f.read()
-        else:
-            raise ValueError(f"Unsupported format: {path.suffix}")
+    def apply_redaction(self, text: str) -> str:
+        """Sanitizes sensitive identifiers and entities from the document text."""
+        cleaned = text
+        for pattern, replacement in self.redaction_rules:
+            cleaned = re.sub(pattern, replacement, cleaned)
+        return cleaned
 
-        return self.normalize_text(raw_text)
-
-    def normalize_text(self, text: str) -> str:
-        text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\xa0", " ")
-        text = re.sub(r"(\b\w+)-\n\s*(\w+\b)", r"\1\2", text)
+    def clean_text(self, raw_text: str) -> str:
+        """Normalizes formatting, de-hyphenates wrapped lines, and redacts PII."""
+        # De-hyphenate words broken across line wraps (e.g., "con-\ntract" -> "contract")
+        text = re.sub(r"(\w+)-\n(\w+)", r"\1\2", raw_text)
+        # Collapse excessive horizontal spaces and blank lines
         text = re.sub(r"[ \t]+", " ", text)
         text = re.sub(r"\n{3,}", "\n\n", text)
-        return text.strip()
+        # Apply privacy and entity redaction
+        return self.apply_redaction(text.strip())
 
-    def segment_sections(self, normalized_text: str) -> List[ContractSection]:
-        matches = list(self.HEADING_PATTERN.finditer(normalized_text))
+    def extract_from_file(self, file_path: str | Path) -> str:
+        """Reads text content from either a searchable PDF or a plain .txt file."""
+        path = Path(file_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Source file not found: {path.resolve()}")
+
+        if path.suffix.lower() == ".pdf":
+            reader = PdfReader(str(path))
+            full_text = "\n".join([page.extract_text() or "" for page in reader.pages])
+        else:
+            full_text = path.read_text(encoding="utf-8")
+
+        return self.clean_text(full_text)
+
+    def segment_clauses(self, full_text: str) -> List[ContractSection]:
+        """Splits full legal text into distinct clause sections using heading regex."""
+        matches = list(self.heading_pattern.finditer(full_text))
         sections: List[ContractSection] = []
 
         if not matches:
-            paragraphs = [p.strip() for p in normalized_text.split("\n\n") if p.strip()]
-            curr_pos = 0
-            for idx, p in enumerate(paragraphs, start=1):
-                start = normalized_text.find(p, curr_pos)
-                end = start + len(p)
-                sections.append(ContractSection(
-                    section_id=idx,
-                    heading="General Provision",
-                    text=p,
-                    char_start=start,
-                    char_end=end
-                ))
-                curr_pos = end
+            # Fallback for unnumbered contracts: chunk by natural double line breaks
+            paragraphs = [p.strip() for p in full_text.split("\n\n") if len(p.strip()) > 80]
+            for idx, p in enumerate(paragraphs, 1):
+                sections.append(
+                    ContractSection(
+                        heading=f"Clause Segment {idx}",
+                        body=p,
+                        char_start=0,
+                        char_end=len(p)
+                    )
+                )
             return sections
 
-        if matches[0].start() > 0:
-            preamble = normalized_text[:matches[0].start()].strip()
-            if preamble:
-                sections.append(ContractSection(
-                    section_id=1,
-                    heading="Preamble / Recitals",
-                    text=preamble,
-                    char_start=0,
-                    char_end=matches[0].start()
-                ))
-
         for i, match in enumerate(matches):
-            raw_heading = match.group(0).strip().split("\n")[0].strip()
-
             start_pos = match.start()
-            end_pos = matches[i + 1].start() if i + 1 < len(matches) else len(normalized_text)
-            
-            section_full = normalized_text[start_pos:end_pos].strip()
+            end_pos = matches[i + 1].start() if (i + 1) < len(matches) else len(full_text)
 
-            # Separate heading line from clause body
-            lines = [l.strip() for l in section_full.split("\n") if l.strip()]
-            if lines:
-                heading = lines[0]
-                body_text = "\n".join(lines[1:]).strip() if len(lines) > 1 else lines[0]
-            else:
-                heading = raw_heading
-                body_text = section_full
+            section_number = match.group(1)
+            section_title = match.group(2).strip()
+            heading_full = f"{section_number} {section_title}"
 
-            sections.append(ContractSection(
-                section_id=len(sections) + 1,
-                heading=heading,
-                text=body_text,
-                char_start=start_pos,
-                char_end=end_pos
-            ))
+            # Body corresponds to text between end of current heading and start of next heading
+            body_text = full_text[match.end():end_pos].strip()
+
+            # Filter out empty or trivial headings
+            if len(body_text) >= 40:
+                sections.append(
+                    ContractSection(
+                        heading=heading_full,
+                        body=body_text,
+                        char_start=start_pos,
+                        char_end=end_pos
+                    )
+                )
 
         return sections
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python ingestdocument.py <path_to_contract.pdf_or_txt>")
-        sys.exit(1)
+    import sys
 
-    input_file = sys.argv[1]
-    ingester = ContractIngester()
-    
-    print(f"[*] Ingesting and processing: {input_file}")
-    text = ingester.load_document(input_file)
-    sections = ingester.segment_sections(text)
+    # Allow testing via command line argument or fallback to default
+    default_input = "Contract_1 (Sale Contract).pdf"
+    input_file = sys.argv[1] if len(sys.argv) > 1 else default_input
 
-    print(f"[+] Successfully parsed {len(sections)} sections.\n")
-    print("=" * 70)
-    for sec in sections:
-        print(f"Section ID  : {sec.section_id}")
-        print(f"Heading     : {sec.heading}")
-        print(f"Span        : [{sec.char_start}:{sec.char_end}]")
-        print(f"Text Preview: {sec.text[:120]}...")
-        print("-" * 70)
+    ingester = LegalDocumentIngester()
+    print(f"[*] Processing document: {input_file}")
+
+    try:
+        sanitized_text = ingester.extract_from_file(input_file)
+        extracted_sections = ingester.segment_clauses(sanitized_text)
+
+        print(f"[✓] Successfully segmented {len(extracted_sections)} sections.\n")
+
+        for idx, sec in enumerate(extracted_sections[:4], 1):
+            print(f"--- [Section {idx}] Heading: {sec.heading} ---")
+            print(f"Character Span: [{sec.char_start} : {sec.char_end}]")
+            print(f"Body Preview: {sec.body[:150]}...\n")
+
+    except Exception as e:
+        print(f"[!] Processing failed: {e}")
