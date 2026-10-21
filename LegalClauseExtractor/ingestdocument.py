@@ -62,13 +62,22 @@ class LegalDocumentIngester:
         return cleaned
 
     def clean_text(self, raw_text: str) -> str:
-        """Normalizes formatting, de-hyphenates wrapped lines, and redacts PII."""
-        # De-hyphenate words broken across line wraps
+        """Normalizes formatting, de-hyphenates wrapped lines, collapses OCR per-word breaks, and redacts PII."""
+        # 1. Fix broken hyphenated words across lines (e.g., "con-\ntract" -> "contract")
         text = re.sub(r"(\w+)-\n(\w+)", r"\1\2", raw_text)
-        # Collapse excessive horizontal spaces and blank lines
+
+        # 2. Normalize Windows/Mac line endings to standard Unix line endings
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+
+        # 3. Collapse single word-per-line OCR artifacts into continuous sentences
+        # Replaces single newlines that are not preceded or followed by another newline with a space
+        text = re.sub(r"(?<!\n)\n(?!\n)", " ", text)
+
+        # 4. Collapse multiple horizontal spaces and excessive blank lines
         text = re.sub(r"[ \t]+", " ", text)
         text = re.sub(r"\n{3,}", "\n\n", text)
-        # Apply privacy and entity redaction
+
+        # 5. Apply privacy and entity redaction
         return self.apply_redaction(text.strip())
 
     def extract_from_file(self, file_path: str | Path) -> str:
