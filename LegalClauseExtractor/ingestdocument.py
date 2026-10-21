@@ -16,120 +16,123 @@ class ContractSection:
 
 class LegalDocumentIngester:
     def __init__(self):
-        # 1. Privacy & Redaction Patterns (Entity names, identification numbers, artifacts)
+        # 1. Privacy & Redaction Rules
         self.redaction_rules = [
-            # 12-digit Indian national identity numbers
+            # Identification numbers (Aadhaar / National ID formats)
             (r"\b\d{4}[ -]?\d{4}[ -]?\d{4}\b", "[ID_REDACTED]"),
-            # Tax identification / PAN codes
+            # PAN / Tax Identifiers
             (r"\b[A-Z]{5}[0-9]{4}[A-Z]\b", "[TAX_ID_REDACTED]"),
-            # Corporate Identification Numbers (CIN)
+            # CIN numbers
             (r"\b[UL][0-9]{5}[A-Z]{2}[0-9]{4}[A-Z]{3}[0-9]{6}\b", "[CIN_REDACTED]"),
-            # Phone / Contact numbers
+            # Contact numbers
             (r"(?:\+91[\-\s]?)?[6-9]\d{9}\b", "[PHONE_REDACTED]"),
             # Email addresses
             (r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,7}\b", "[EMAIL_REDACTED]"),
-            # Scanner stamps, watermarks, and regulatory filing headers
+            # Scanner watermarks & filing headers
             (r"(?i)scanned\s+by\s+camscanner", ""),
             (r"(?i)annexure\s*\[see\s*rule\s*\d+\]", ""),
-            # Enterprise, developer, and builder entities
+            # Standalone page numbers from OCR (e.g., "62", "63" on newlines)
+            (r"(?m)^\s*\d{1,3}\s*$", ""),
+            # Organizations & developer entities
             (
-                r"(?i)\b[A-Z0-9\s,\.&]{3,50}\s+(?:CONSTRUCTIONS?|BUILDERS?|DEVELOPERS?|INFRASTRUCTURE|REALTORS?|PROJECTS?|PROPERTIES|ESTATES?|SOLUTIONS|SYSTEMS|CORP|INC|LIMITED|LTD|PVT\.?\s*LTD|LLP)\b",
+                r"(?i)\b[A-Z0-9\s,\.&]{3,50}\s+(?:CONSTRUCTIONS?|BUILDERS?|DEVELOPERS?|INFRASTRUCTURE|REALTORS?|PROPERTIES|ESTATES?|SOLUTIONS|SYSTEMS|CORP|INC|LIMITED|LTD|PVT\.?\s*LTD|LLP)\b",
                 "[ORGANIZATION_REDACTED]"
             ),
-            # Named party representations (e.g., "represented by its partner John Doe")
+            # Named party representations
             (
                 r"(?i)(represented by\s+(?:its\s+)?(?:authorized\s+)?(?:signatory|partner|director|proprietor)?[\s,:]+)([A-Z][a-zA-Z\s\.]{2,35})(?=\s+(?:vide|having|hereinafter|aged|resident))",
                 r"\1[REPRESENTATIVE_REDACTED]"
             ),
-            # Individual party names preceded by relational legal designations
+            # Personal names following legal relational markers
             (
                 r"(?i)(son\s+of|daughter\s+of|wife\s+of|mr\.|ms\.|mrs\.|sri|shri)\s+([A-Z][a-zA-Z\s\.]{2,35})(?=\s+(?:aged|residing|hereinafter|,|\.))",
                 r"\1 [INDIVIDUAL_REDACTED]"
             ),
         ]
 
-        # 2. Heading boundary regex for standard commercial and property contracts
-        # Handles patterns like: "1. TERMS:", "ARTICLE 1 APPOINTMENT", "7. POSSESSION", "9. EVENTS OF DEFAULTS"
+        # 2. Resilient Heading Pattern
+        # Matches patterns like:
+        #   "1. TERMS:"
+        #   "7. POSSESSION OF THE APARTMENT/PLOT:"
+        #   "9. EVENTS OF DEFAULTS AND CONSEQUENCES:"
+        #   "21. ENTIRE AGREEMENT:"
+        #   "ARTICLE 1. APPOINTMENT"
         self.heading_pattern = re.compile(
-            r"(?m)^(?:\s*(?:SECTION|CLAUSE|ARTICLE)?\s*(\d{1,2}(?:\.\d{1,2})*)\.?\s+([A-Z\s,/–\-]{3,65}?)(?::|\.|\n))"
+            r"(?:^|\n)\s*(?:SECTION|CLAUSE|ARTICLE)?\s*(\d{1,2}(?:\.\d{1,2})*)\.?\s+([A-Z\s,/–\-]{3,65}?)(?::|\.|\n)",
+            re.MULTILINE
         )
 
     def apply_redaction(self, text: str) -> str:
-        """Sanitizes sensitive identifiers and entities from the document text."""
+        """Sanitizes sensitive identifiers and entities from text."""
         cleaned = text
         for pattern, replacement in self.redaction_rules:
             cleaned = re.sub(pattern, replacement, cleaned)
         return cleaned
 
     def clean_text(self, raw_text: str) -> str:
-        """Normalizes formatting, de-hyphenates wrapped lines, collapses OCR per-word breaks, and redacts PII."""
-        # 1. Fix broken hyphenated words across lines (e.g., "con-\ntract" -> "contract")
+        """Normalizes formatting, collapses OCR per-word linebreaks, and redacts PII."""
+        # Fix hyphenated breaks across lines
         text = re.sub(r"(\w+)-\n(\w+)", r"\1\2", raw_text)
-
-        # 2. Normalize Windows/Mac line endings to standard Unix line endings
+        # Normalize Windows line endings
         text = text.replace("\r\n", "\n").replace("\r", "\n")
-
-        # 3. Collapse single word-per-line OCR artifacts into continuous sentences
-        # Replaces single newlines that are not preceded or followed by another newline with a space
+        # Collapse single newlines between words into a space, keeping double newlines for paragraphs
         text = re.sub(r"(?<!\n)\n(?!\n)", " ", text)
-
-        # 4. Collapse multiple horizontal spaces and excessive blank lines
+        # Collapse excessive whitespace
         text = re.sub(r"[ \t]+", " ", text)
         text = re.sub(r"\n{3,}", "\n\n", text)
-
-        # 5. Apply privacy and entity redaction
         return self.apply_redaction(text.strip())
 
     def extract_from_file(self, file_path: str | Path) -> str:
-        """Reads text content from either a searchable PDF or a plain .txt file."""
+        """Reads text from either a searchable PDF or a plain .txt file."""
         path = Path(file_path)
         if not path.exists():
             raise FileNotFoundError(f"Source file not found: {path.resolve()}")
 
         if path.suffix.lower() == ".pdf":
             reader = PdfReader(str(path))
-            full_text = "\n".join([page.extract_text() or "" for page in reader.pages])
+            full_text = "\n\n".join([page.extract_text() or "" for page in reader.pages])
         else:
             full_text = path.read_text(encoding="utf-8")
 
         return self.clean_text(full_text)
 
     def segment_clauses(self, full_text: str) -> List[ContractSection]:
-        """Splits full legal text into distinct clause sections using heading regex."""
+        """Segments text into distinct clauses using regex with fallback."""
         matches = list(self.heading_pattern.finditer(full_text))
         sections: List[ContractSection] = []
 
-        if not matches:
-            # Fallback for unnumbered contracts: chunk by natural double line breaks
-            paragraphs = [p.strip() for p in full_text.split("\n\n") if len(p.strip()) > 80]
-            for idx, p in enumerate(paragraphs, 1):
-                sections.append(
-                    ContractSection(
-                        heading=f"Clause Segment {idx}",
-                        body=p,
-                        char_start=0,
-                        char_end=len(p)
+        if matches:
+            for i, match in enumerate(matches):
+                start_pos = match.start()
+                end_pos = matches[i + 1].start() if (i + 1) < len(matches) else len(full_text)
+
+                sec_num = match.group(1).strip()
+                sec_title = " ".join(match.group(2).split())
+                heading_full = f"{sec_num} {sec_title}"
+
+                body_text = full_text[match.end():end_pos].strip()
+
+                if len(body_text) >= 40:
+                    sections.append(
+                        ContractSection(
+                            heading=heading_full,
+                            body=body_text,
+                            char_start=start_pos,
+                            char_end=end_pos
+                        )
                     )
-                )
-            return sections
 
-        for i, match in enumerate(matches):
-            start_pos = match.start()
-            end_pos = matches[i + 1].start() if (i + 1) < len(matches) else len(full_text)
-
-            section_number = match.group(1)
-            section_title = match.group(2).strip()
-            heading_full = f"{section_number} {section_title}"
-
-            body_text = full_text[match.end():end_pos].strip()
-
-            if len(body_text) >= 40:
+        # Fallback if no numbered headings matched
+        if not sections:
+            blocks = [b.strip() for b in full_text.split("\n\n") if len(b.strip()) >= 50]
+            for idx, block in enumerate(blocks, 1):
+                first_line = block.split("\n")[0][:45]
                 sections.append(
                     ContractSection(
-                        heading=heading_full,
-                        body=body_text,
-                        char_start=start_pos,
-                        char_end=end_pos
+                        heading=f"Clause Segment {idx}: {first_line}",
+                        body=block,
+                        char_start=0,
+                        char_end=len(block)
                     )
                 )
 
@@ -152,7 +155,7 @@ if __name__ == "__main__":
 
         print(f"[✓] Successfully segmented {len(extracted_sections)} sections.\n")
 
-        for idx, sec in enumerate(extracted_sections[:4], 1):
+        for idx, sec in enumerate(extracted_sections[:5], 1):
             print(f"--- [Section {idx}] Heading: {sec.heading} ---")
             print(f"Character Span: [{sec.char_start} : {sec.char_end}]")
             print(f"Body Preview: {sec.body[:150]}...\n")
