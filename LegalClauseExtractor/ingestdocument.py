@@ -18,72 +18,66 @@ class LegalDocumentIngester:
     def __init__(self):
         # 1. Privacy & Redaction Rules
         self.redaction_rules = [
-            # Identification numbers (Aadhaar / National ID formats)
             (r"\b\d{4}[ -]?\d{4}[ -]?\d{4}\b", "[ID_REDACTED]"),
-            # PAN / Tax Identifiers
             (r"\b[A-Z]{5}[0-9]{4}[A-Z]\b", "[TAX_ID_REDACTED]"),
-            # CIN numbers
             (r"\b[UL][0-9]{5}[A-Z]{2}[0-9]{4}[A-Z]{3}[0-9]{6}\b", "[CIN_REDACTED]"),
-            # Contact numbers
             (r"(?:\+91[\-\s]?)?[6-9]\d{9}\b", "[PHONE_REDACTED]"),
-            # Email addresses
             (r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,7}\b", "[EMAIL_REDACTED]"),
-            # Scanner watermarks & filing headers
             (r"(?i)scanned\s+by\s+camscanner", ""),
             (r"(?i)annexure\s*\[see\s*rule\s*\d+\]", ""),
-            # Standalone page numbers from OCR (e.g., "62", "63" on newlines)
-            (r"(?m)^\s*\d{1,3}\s*$", ""),
-            # Organizations & developer entities
             (
                 r"(?i)\b[A-Z0-9\s,\.&]{3,50}\s+(?:CONSTRUCTIONS?|BUILDERS?|DEVELOPERS?|INFRASTRUCTURE|REALTORS?|PROPERTIES|ESTATES?|SOLUTIONS|SYSTEMS|CORP|INC|LIMITED|LTD|PVT\.?\s*LTD|LLP)\b",
                 "[ORGANIZATION_REDACTED]"
             ),
-            # Named party representations
             (
                 r"(?i)(represented by\s+(?:its\s+)?(?:authorized\s+)?(?:signatory|partner|director|proprietor)?[\s,:]+)([A-Z][a-zA-Z\s\.]{2,35})(?=\s+(?:vide|having|hereinafter|aged|resident))",
                 r"\1[REPRESENTATIVE_REDACTED]"
             ),
-            # Personal names following legal relational markers
             (
                 r"(?i)(son\s+of|daughter\s+of|wife\s+of|mr\.|ms\.|mrs\.|sri|shri)\s+([A-Z][a-zA-Z\s\.]{2,35})(?=\s+(?:aged|residing|hereinafter|,|\.))",
                 r"\1 [INDIVIDUAL_REDACTED]"
             ),
         ]
 
-        # 2. Resilient Heading Pattern
-        # Matches patterns like:
-        #   "1. TERMS:"
-        #   "7. POSSESSION OF THE APARTMENT/PLOT:"
-        #   "9. EVENTS OF DEFAULTS AND CONSEQUENCES:"
-        #   "21. ENTIRE AGREEMENT:"
-        #   "ARTICLE 1. APPOINTMENT"
+        # 2. Section Heading Matcher: matches both numbered and labeled contract headings
         self.heading_pattern = re.compile(
-            r"(?:^|\n)\s*(?:SECTION|CLAUSE|ARTICLE)?\s*(\d{1,2}(?:\.\d{1,2})*)\.?\s+([A-Z\s,/–\-]{3,65}?)(?::|\.|\n)",
-            re.MULTILINE
+            r"(?m)^\s*(?:\d{1,3}\s+)?(?:SECTION|CLAUSE|ARTICLE)?\s*(\d{1,2}(?:\.\d{1,2})*)\.?\s*[\n\t ]+([A-Z\s,/–\-]{3,65}?)(?::|\.|\n|$)"
         )
 
     def apply_redaction(self, text: str) -> str:
-        """Sanitizes sensitive identifiers and entities from text."""
         cleaned = text
         for pattern, replacement in self.redaction_rules:
             cleaned = re.sub(pattern, replacement, cleaned)
         return cleaned
 
     def clean_text(self, raw_text: str) -> str:
-        """Normalizes formatting, collapses OCR per-word linebreaks, and redacts PII."""
-        # Fix hyphenated breaks across lines
-        text = re.sub(r"(\w+)-\n(\w+)", r"\1\2", raw_text)
-        # Normalize Windows line endings
-        text = text.replace("\r\n", "\n").replace("\r", "\n")
-        # Collapse single newlines between words into a space, keeping double newlines for paragraphs
+        # Step A: Normalize line breaks
+        text = raw_text.replace("\r\n", "\n").replace("\r", "\n")
+
+        # Step B: Remove leading OCR page numbers at the start of any line (e.g., "62 ", "63 [If...")
+        text = re.sub(r"(?m)^\s*\d{1,3}\s+(?=[A-Za-z\[])", "", text)
+
+        # Step C: Fix hyphenated line breaks
+        text = re.sub(r"(\w+)-\n(\w+)", r"\1\2", text)
+
+        # Step D: Ensure numbered clauses stand on their own line with double linebreaks
+        # e.g., turn "some text 7. POSSESSION:" into "some text \n\n7. POSSESSION:"
+        text = re.sub(
+            r"([^\n])\s+(\b\d{1,2}\.\s+[A-Z\s,/–\-]{3,40}:)",
+            r"\1\n\n\2",
+            text
+        )
+
+        # Step E: Smooth out OCR single-word lines without destroying double newlines
         text = re.sub(r"(?<!\n)\n(?!\n)", " ", text)
-        # Collapse excessive whitespace
+
+        # Step F: Collapse horizontal whitespace
         text = re.sub(r"[ \t]+", " ", text)
         text = re.sub(r"\n{3,}", "\n\n", text)
+
         return self.apply_redaction(text.strip())
 
     def extract_from_file(self, file_path: str | Path) -> str:
-        """Reads text from either a searchable PDF or a plain .txt file."""
         path = Path(file_path)
         if not path.exists():
             raise FileNotFoundError(f"Source file not found: {path.resolve()}")
@@ -97,7 +91,6 @@ class LegalDocumentIngester:
         return self.clean_text(full_text)
 
     def segment_clauses(self, full_text: str) -> List[ContractSection]:
-        """Segments text into distinct clauses using regex with fallback."""
         matches = list(self.heading_pattern.finditer(full_text))
         sections: List[ContractSection] = []
 
@@ -112,7 +105,7 @@ class LegalDocumentIngester:
 
                 body_text = full_text[match.end():end_pos].strip()
 
-                if len(body_text) >= 40:
+                if len(body_text) >= 30:
                     sections.append(
                         ContractSection(
                             heading=heading_full,
