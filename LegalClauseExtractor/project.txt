@@ -13,3 +13,12 @@ Step 3: Feature Engineering & Text Vectorization Pipeline
 Step 4: Multi-Class Clause Classifier & Scorer
 Step 5: Information Extraction & Parameter Parser
 Step 6: CLI Runner & Visual Contract Report 
+
+
+
+
+
+step 1 done
+redesigned the code to ensure that the pretrained data is removed and data will be trained based on the contracts and it should be
+able to perform on unseen contracts
+the second part needs to be done
