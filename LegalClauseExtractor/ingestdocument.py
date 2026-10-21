@@ -1,4 +1,5 @@
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List
@@ -62,7 +63,7 @@ class LegalDocumentIngester:
 
     def clean_text(self, raw_text: str) -> str:
         """Normalizes formatting, de-hyphenates wrapped lines, and redacts PII."""
-        # De-hyphenate words broken across line wraps (e.g., "con-\ntract" -> "contract")
+        # De-hyphenate words broken across line wraps
         text = re.sub(r"(\w+)-\n(\w+)", r"\1\2", raw_text)
         # Collapse excessive horizontal spaces and blank lines
         text = re.sub(r"[ \t]+", " ", text)
@@ -111,10 +112,8 @@ class LegalDocumentIngester:
             section_title = match.group(2).strip()
             heading_full = f"{section_number} {section_title}"
 
-            # Body corresponds to text between end of current heading and start of next heading
             body_text = full_text[match.end():end_pos].strip()
 
-            # Filter out empty or trivial headings
             if len(body_text) >= 40:
                 sections.append(
                     ContractSection(
@@ -129,12 +128,12 @@ class LegalDocumentIngester:
 
 
 if __name__ == "__main__":
-    import sys
+    if len(sys.argv) < 2:
+        print("[!] Error: No input file provided.")
+        print("Usage: python ingestdocument.py <path_to_contract_file>")
+        sys.exit(1)
 
-    # Allow testing via command line argument or fallback to default
-    default_input = "Contract_1 (Sale Contract).pdf"
-    input_file = sys.argv[1] if len(sys.argv) > 1 else default_input
-
+    input_file = sys.argv[1]
     ingester = LegalDocumentIngester()
     print(f"[*] Processing document: {input_file}")
 
