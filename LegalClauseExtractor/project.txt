@@ -6,6 +6,8 @@ Requirements:-
 
 pip install pypdf scikit-learn
 
+run command:- python file_name.py (file_name = name of the file)
+
 
 Step 1: Document Ingestion & Section Segmentation
 Step 2: Benchmark Dataset Loader & Ground-Truth Aligner
@@ -23,6 +25,8 @@ redesigned the code to ensure that the pretrained data is removed and data will 
 able to perform on unseen contracts
 the second part needs to be done
 
+
+
 step 2 done, removed the clauses_dataset.csv and regenerated it using new code in dataset_loader.py
 ensured privacy by removing clauses where names and other personal information is removed while loading the dataset
 
@@ -32,8 +36,8 @@ ensured privacy by removing clauses where names and other personal information i
 step 3 done, feature engineering added to the text vectorization pipeline and built a hybrid feature extraction 
 pipeline combining classical NLP with custom legal domain engineering. 
 Extracted unigrams and bigrams (ngram_range=(1, 2)) to capture multi-word legal collocations
-Engineered 8 dense numerical signals for each clause with Character length (log-scaled), average word length, and uppercase token ratio
-and Modal verb density and Term densities for liability/defect, termination/default, jurisdiction/courts, and 
+Engineered 8 dense numerical signals for each clause with Character length (log-scaled), average word length, and uppercase token 
+ratio and Modal verb density and Term densities for liability/defect, termination/default, jurisdiction/courts, and 
 payment/financial terms.
 Combined sparse text features and dense domain metrics via FeatureUnion into a single 15,599-dimensional feature space and saved
 the fitted transformer to vectorizer.joblib for identical feature mapping during model training and unseen contract inference.
