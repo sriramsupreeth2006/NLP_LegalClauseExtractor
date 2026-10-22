@@ -22,3 +22,6 @@ step 1 done
 redesigned the code to ensure that the pretrained data is removed and data will be trained based on the contracts and it should be
 able to perform on unseen contracts
 the second part needs to be done
+
+step 2 done, removed the clauses_dataset.csv and regenerated it using new code in dataset_loader.py
+ensured privacy by removing clauses where names and other personal information is removed while loading the dataset
