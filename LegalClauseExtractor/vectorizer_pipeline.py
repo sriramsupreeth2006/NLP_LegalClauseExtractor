@@ -1,125 +1,145 @@
 import sys
+import re
 from pathlib import Path
-from typing import Tuple, List, Dict
+from typing import List, Tuple
 import joblib
 import numpy as np
 import pandas as pd
+from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.pipeline import FeatureUnion
+
+
+class LegalDomainFeatureExtractor(BaseEstimator, TransformerMixin):
+    """
+    Explicit Feature Engineering for Legal Clauses:
+    Extracts structural, modal, and linguistic density signals.
+    """
+    def __init__(self):
+        # 1. Deontic obligation modals (commands / requirements)
+        self.deontic_modals = re.compile(
+            r"\b(shall|must|agrees to|hereby|undertakes|warrants)\b", re.IGNORECASE
+        )
+        # 2. Defect / Liability / Indemnity signals
+        self.liability_terms = re.compile(
+            r"\b(liability|indemnify|indemnification|hold harmless|defective|defect|compensate|damages|loss)\b",
+            re.IGNORECASE
+        )
+        # 3. Termination / Cancellation signals
+        self.termination_terms = re.compile(
+            r"\b(terminate|termination|default|cancel|cancellation|refund|rescind|breach)\b",
+            re.IGNORECASE
+        )
+        # 4. Jurisdiction & Statutory Dispute signals
+        self.jurisdiction_terms = re.compile(
+            r"\b(court|courts|arbitration|governing law|jurisdiction|dispute|tribunal|laws of)\b",
+            re.IGNORECASE
+        )
+        # 5. Financial / Payment signals
+        self.payment_terms = re.compile(
+            r"\b(rupees|rs|inr|percent|percentage|interest|installment|dues|payable|advance)\b",
+            re.IGNORECASE
+        )
+
+    def fit(self, X, y=None):
+        return self
+
+    def transform(self, X):
+        features = []
+        for text in X:
+            t = str(text)
+            tokens = re.findall(r"\w+", t)
+            num_tokens = max(len(tokens), 1)
+
+            # A. Structural / Surface Features
+            char_length = len(t)
+            avg_word_length = char_length / num_tokens
+            caps_ratio = sum(1 for w in tokens if w.isupper()) / num_tokens
+
+            # B. Modal Verb & Obligation Density (per 100 words)
+            modal_count = len(self.deontic_modals.findall(t))
+            modal_density = (modal_count / num_tokens) * 100
+
+            # C. Category Cue Densities (per 100 words)
+            liability_density = (len(self.liability_terms.findall(t)) / num_tokens) * 100
+            termination_density = (len(self.termination_terms.findall(t)) / num_tokens) * 100
+            jurisdiction_density = (len(self.jurisdiction_terms.findall(t)) / num_tokens) * 100
+            payment_density = (len(self.payment_terms.findall(t)) / num_tokens) * 100
+
+            features.append([
+                np.log1p(char_length),
+                avg_word_length,
+                caps_ratio,
+                modal_density,
+                liability_density,
+                termination_density,
+                jurisdiction_density,
+                payment_density
+            ])
+
+        return np.array(features)
 
 
 class LegalClauseVectorizer:
-    def __init__(
-        self,
-        ngram_range: Tuple[int, int] = (1, 2),
-        min_df: int = 1,
-        max_df: float = 0.95,
-        sublinear_tf: bool = True
-    ):
-        self.vectorizer = TfidfVectorizer(
-            ngram_range=ngram_range,
-            stop_words="english",
-            sublinear_tf=sublinear_tf,
-            min_df=min_df,
-            max_df=max_df,
-            norm="l2",
-            strip_accents="unicode"
-        )
+    def __init__(self, ngram_range: Tuple[int, int] = (1, 2), sublinear_tf: bool = True):
+        # FeatureUnion combines the sparse n-gram matrix and dense domain signals
+        self.pipeline = FeatureUnion([
+            (
+                "tfidf",
+                TfidfVectorizer(
+                    ngram_range=ngram_range,
+                    stop_words="english",
+                    sublinear_tf=sublinear_tf,
+                    min_df=1,
+                    max_df=0.95,
+                    norm="l2",
+                    strip_accents="unicode"
+                )
+            ),
+            (
+                "domain_features",
+                LegalDomainFeatureExtractor()
+            )
+        ])
         self.classes_: List[str] = []
 
     def fit_transform(self, texts: pd.Series, labels: pd.Series):
-        """Fits vectorizer vocabulary and transforms raw clause texts into sparse TF-IDF matrices."""
-        print(f"[*] Extracting vocabulary and fitting TF-IDF on {len(texts)} samples...")
-        X_tfidf = self.vectorizer.fit_transform(texts)
+        print(f"[*] Extracting hybrid features (TF-IDF + Domain Signals) on {len(texts)} samples...")
+        X_feats = self.pipeline.fit_transform(texts)
         self.classes_ = sorted(labels.unique())
-        print(f"[✓] Vocabulary size: {len(self.vectorizer.vocabulary_)} distinct n-grams.")
-        return X_tfidf
+        print(f"[✓] Total feature dimensions extracted: {X_feats.shape[1]}")
+        return X_feats
 
     def transform(self, texts: pd.Series | List[str]):
-        """Transforms unseen texts using the fitted feature space."""
-        return self.vectorizer.transform(texts)
-
-    def inspect_top_features_per_class(
-        self, X_tfidf, labels: pd.Series, top_n: int = 8
-    ) -> Dict[str, List[str]]:
-        """Identifies top-weighted n-grams per legal class based on mean TF-IDF scores."""
-        feature_names = np.array(self.vectorizer.get_feature_names_out())
-        top_terms_by_class = {}
-
-        for category in self.classes_:
-            category_indices = np.where(labels.values == category)[0]
-            if len(category_indices) == 0:
-                continue
-
-            # Compute mean TF-IDF weight across all clauses in this category
-            mean_tfidf = np.asarray(X_tfidf[category_indices].mean(axis=0)).flatten()
-            top_indices = mean_tfidf.argsort()[::-1][:top_n]
-            top_terms_by_class[category] = feature_names[top_indices].tolist()
-
-        return top_terms_by_class
+        return self.pipeline.transform(texts)
 
     def save(self, output_path: str | Path = "vectorizer.joblib"):
-        """Serializes vectorizer instance and class labels."""
         path = Path(output_path)
-        artifact = {
-            "vectorizer": self.vectorizer,
-            "classes": self.classes_
-        }
-        joblib.dump(artifact, path)
-        print(f"[✓] Vectorization pipeline saved to: {path.name}")
+        joblib.dump({"pipeline": self.pipeline, "classes": self.classes_}, path)
+        print(f"[✓] Engineered feature pipeline saved to: {path.name}")
 
     @classmethod
     def load(cls, artifact_path: str | Path = "vectorizer.joblib") -> "LegalClauseVectorizer":
-        """Loads a pre-fitted vectorizer artifact."""
         path = Path(artifact_path)
         if not path.exists():
-            raise FileNotFoundError(f"[!] Vectorizer artifact not found: {path}")
-
+            raise FileNotFoundError(f"[!] Artifact not found: {path}")
         data = joblib.load(path)
         instance = cls()
-        instance.vectorizer = data["vectorizer"]
+        instance.pipeline = data["pipeline"]
         instance.classes_ = data["classes"]
         return instance
 
 
-def run_pipeline(
-    input_csv: str = "clauses_dataset.csv",
-    output_artifact: str = "vectorizer.joblib"
-):
-    csv_path = Path(input_csv)
-    if not csv_path.exists():
-        print(f"[!] Error: {input_csv} does not exist.")
-        print("[!] Run dataset_loader.py first to create the dataset.")
+if __name__ == "__main__":
+    csv_file = sys.argv[1] if len(sys.argv) > 1 else "clauses_dataset.csv"
+    if not Path(csv_file).exists():
+        print(f"[!] {csv_file} not found. Run dataset_loader.py first.")
         sys.exit(1)
 
-    # 1. Load dataset
-    df = pd.read_csv(csv_path)
-    df = df.dropna(subset=["clause_text", "label"])
+    df = pd.read_csv(csv_file).dropna(subset=["clause_text", "label"])
     df["clause_text"] = df["clause_text"].astype(str).str.strip()
     df["label"] = df["label"].astype(str).str.strip()
 
-    texts = df["clause_text"]
-    labels = df["label"]
-
-    print(f"[*] Dataset loaded successfully ({len(df)} rows).")
-
-    # 2. Fit and transform
-    feature_pipeline = LegalClauseVectorizer(ngram_range=(1, 2), min_df=1)
-    X_tfidf = feature_pipeline.fit_transform(texts, labels)
-
-    # 3. Inspect learned salient legal phrases
-    print("\n" + "=" * 60)
-    print("        TOP PREDICTIVE N-GRAMS BY LEGAL CATEGORY")
-    print("=" * 60)
-    top_terms = feature_pipeline.inspect_top_features_per_class(X_tfidf, labels, top_n=6)
-    for category, terms in top_terms.items():
-        print(f"[{category}]")
-        print("  -> " + ", ".join(f"'{term}'" for term in terms))
-    print("=" * 60 + "\n")
-
-    # 4. Save artifact
-    feature_pipeline.save(output_artifact)
-
-
-if __name__ == "__main__":
-    dataset_file = sys.argv[1] if len(sys.argv) > 1 else "clauses_dataset.csv"
-    run_pipeline(input_csv=dataset_file)
+    vectorizer = LegalClauseVectorizer()
+    X = vectorizer.fit_transform(df["clause_text"], df["label"])
+    vectorizer.save("vectorizer.joblib")
