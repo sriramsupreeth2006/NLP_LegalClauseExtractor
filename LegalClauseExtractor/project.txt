@@ -41,3 +41,6 @@ ratio and Modal verb density and Term densities for liability/defect, terminatio
 payment/financial terms.
 Combined sparse text features and dense domain metrics via FeatureUnion into a single 15,599-dimensional feature space and saved
 the fitted transformer to vectorizer.joblib for identical feature mapping during model training and unseen contract inference.
+
+
+ste
