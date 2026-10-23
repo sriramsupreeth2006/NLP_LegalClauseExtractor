@@ -95,3 +95,18 @@ Push (git push origin feature/amazing)
 
 Open Pull Request
 
+
+
+
+
+
+
+
+
+
+
+#To open LegalClauseExtractor folder and run programs, use the command
+python ingestdocument.py
+python [file_name].py
+for the first two codes ingestdocument.py and dataset_loader.py, attachj the document names exactly as mentioned
+in the name of the pdf starting with " and ending with "
