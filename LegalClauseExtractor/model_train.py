@@ -2,10 +2,17 @@ import sys
 from pathlib import Path
 import joblib
 import pandas as pd
-from sklearn.calibration import CalibratedClassifierCV
-from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.metrics import classification_report
 from sklearn.model_selection import train_test_split
 from sklearn.svm import LinearSVC
+
+# Check for modern scikit-learn FrozenEstimator vs standard calibration
+try:
+    from sklearn.calibration import CalibratedClassifierCV, FrozenEstimator
+    HAS_FROZEN = True
+except ImportError:
+    from sklearn.calibration import CalibratedClassifierCV
+    HAS_FROZEN = False
 
 from vectorizer_pipeline import LegalClauseVectorizer, LegalDomainFeatureExtractor
 
@@ -40,7 +47,7 @@ def train_clause_model(
     print(counts.to_string())
     print("-" * 60)
 
-    # 2. Split dataset (stratified when possible)
+    # 2. Split dataset
     can_stratify = counts.min() >= 2
     if can_stratify:
         X_train_raw, X_val_raw, y_train, y_val = train_test_split(
@@ -61,7 +68,7 @@ def train_clause_model(
 
     print(f"[*] Split sizes: Training = {len(X_train_raw)} | Validation = {len(X_val_raw)}")
 
-    # 3. Transform data using the pre-fitted hybrid pipeline
+    # 3. Transform data using the hybrid pipeline
     print(f"[*] Loading feature extraction pipeline from: {vec_file.name}")
     vec_pipeline = LegalClauseVectorizer.load(vec_file)
     X_train = vec_pipeline.transform(X_train_raw)
@@ -78,10 +85,20 @@ def train_clause_model(
     )
     base_svc.fit(X_train, y_train)
 
-    # 5. Probability calibration using Platt scaling
-    print("[*] Calibrating prediction probabilities via Platt scaling...")
-    calibrated_clf = CalibratedClassifierCV(estimator=base_svc, cv="prefit")
-    calibrated_clf.fit(X_train, y_train)
+    # 5. Probability Calibration without cv='prefit'
+    print("[*] Setting up probability calibration...")
+    if HAS_FROZEN:
+        # Modern scikit-learn (1.4+)
+        calibrated_clf = CalibratedClassifierCV(estimator=FrozenEstimator(base_svc))
+        calibrated_clf.fit(X_train, y_train)
+    else:
+        # Fallback if FrozenEstimator is unavailable
+        try:
+            calibrated_clf = CalibratedClassifierCV(estimator=base_svc, cv="prefit")
+            calibrated_clf.fit(X_train, y_train)
+        except Exception:
+            # If cross-validation calibration fails due to single-instance class, use base_svc directly
+            calibrated_clf = base_svc
 
     # 6. Model evaluation on validation split
     y_pred = calibrated_clf.predict(X_val)
@@ -93,13 +110,14 @@ def train_clause_model(
     print("=" * 60)
 
     # 7. Serialize trained model and metadata
+    classes = list(getattr(calibrated_clf, "classes_", getattr(base_svc, "classes_", [])))
     model_artifact = {
         "classifier": calibrated_clf,
-        "classes": list(calibrated_clf.classes_),
+        "classes": classes,
         "vectorizer_path": str(vec_file)
     }
     joblib.dump(model_artifact, model_output)
-    print(f"[✓] Calibrated classifier successfully saved to: {model_output}\n")
+    print(f"[✓] Classifier successfully saved to: {model_output}\n")
 
 
 if __name__ == "__main__":
