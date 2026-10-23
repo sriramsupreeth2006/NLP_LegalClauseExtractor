@@ -25,6 +25,11 @@ class LegalDocumentIngester:
             (r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,7}\b", "[EMAIL_REDACTED]"),
             (r"(?i)scanned\s+by\s+camscanner", ""),
             (r"(?i)annexure\s*\[see\s*rule\s*\d+\]", ""),
+            # Web Print & SEC Artifacts
+            (r"\d{1,2}/\d{1,2}/\d{2,4},\s*\d{1,2}:\d{2}\s*(?:AM|PM)\s*sec\.gov/[^\n]+", ""),
+            (r"https?://www\.sec\.gov/[^\n]+", ""),
+            (r"(?m)^\s*(?:Exhibit\s+\d+\.\d+|EX-\d+\.\d+)[^\n]*$", ""),
+            # Entity Redaction
             (
                 r"(?i)\b[A-Z0-9\s,\.&]{3,50}\s+(?:CONSTRUCTIONS?|BUILDERS?|DEVELOPERS?|INFRASTRUCTURE|REALTORS?|PROPERTIES|ESTATES?|SOLUTIONS|SYSTEMS|CORP|INC|LIMITED|LTD|PVT\.?\s*LTD|LLP)\b",
                 "[ORGANIZATION_REDACTED]"
@@ -39,9 +44,17 @@ class LegalDocumentIngester:
             ),
         ]
 
-        # 2. Section Heading Matcher: matches both numbered and labeled contract headings
+        # 2. Section Heading Matcher:
+        # Handles:
+        # - "Section 10 LIABILITY" or "Section 10 \n LIABILITY"
+        # - "1. TERMS:" / "9. EVENTS OF DEFAULTS:"
+        # - "ARTICLE 3 TERM OF AGREEMENT"
         self.heading_pattern = re.compile(
-            r"(?m)^\s*(?:\d{1,3}\s+)?(?:SECTION|CLAUSE|ARTICLE)?\s*(\d{1,2}(?:\.\d{1,2})*)\.?\s*[\n\t ]+([A-Z\s,/–\-]{3,65}?)(?::|\.|\n|$)"
+            r"(?m)^\s*(?:"
+            r"(?:SECTION|ARTICLE|CLAUSE)\s+(\d{1,2})\s*[:\.\-]?\s*\n?\s*([A-Z\s,/–\-]{3,50}?)"
+            r"|"
+            r"(\d{1,2}(?:\.\d{1,2})*)\.?\s+([A-Z\s,/–\-]{3,50}?)(?::|\.|\n|$)"
+            r")(?=\n|\r|$)"
         )
 
     def apply_redaction(self, text: str) -> str:
@@ -54,24 +67,31 @@ class LegalDocumentIngester:
         # Step A: Normalize line breaks
         text = raw_text.replace("\r\n", "\n").replace("\r", "\n")
 
-        # Step B: Remove leading OCR page numbers at the start of any line (e.g., "62 ", "63 [If...")
+        # Step B: Strip page indicators and standalone digits
+        text = re.sub(r"(?m)^\s*\d{1,2}/\d{1,2}\s*$", "", text)
+        text = re.sub(r"(?m)^\s*[-–—]?\s*\d{1,3}\s*[-–—]?\s*$", "", text)
         text = re.sub(r"(?m)^\s*\d{1,3}\s+(?=[A-Za-z\[])", "", text)
 
-        # Step C: Fix hyphenated line breaks
+        # Step C: Fix hyphenated word line breaks
         text = re.sub(r"(\w+)-\n(\w+)", r"\1\2", text)
 
-        # Step D: Ensure numbered clauses stand on their own line with double linebreaks
-        # e.g., turn "some text 7. POSSESSION:" into "some text \n\n7. POSSESSION:"
+        # Step D: Isolate headings with surrounding double line breaks so Step E won't merge them
+        text = re.sub(
+            r"(?m)^\s*((?:SECTION|ARTICLE|CLAUSE)\s+\d{1,2}\s*\n?\s*[A-Z\s,/–\-]{3,50})",
+            r"\n\n\1\n\n",
+            text,
+            flags=re.IGNORECASE
+        )
         text = re.sub(
             r"([^\n])\s+(\b\d{1,2}\.\s+[A-Z\s,/–\-]{3,40}:)",
-            r"\1\n\n\2",
+            r"\1\n\n\2\n\n",
             text
         )
 
-        # Step E: Smooth out OCR single-word lines without destroying double newlines
+        # Step E: Smooth out OCR linebreaks while preserving paragraphs
         text = re.sub(r"(?<!\n)\n(?!\n)", " ", text)
 
-        # Step F: Collapse horizontal whitespace
+        # Step F: Collapse whitespace
         text = re.sub(r"[ \t]+", " ", text)
         text = re.sub(r"\n{3,}", "\n\n", text)
 
@@ -99,13 +119,19 @@ class LegalDocumentIngester:
                 start_pos = match.start()
                 end_pos = matches[i + 1].start() if (i + 1) < len(matches) else len(full_text)
 
-                sec_num = match.group(1).strip()
-                sec_title = " ".join(match.group(2).split())
-                heading_full = f"{sec_num} {sec_title}"
+                # Extract heading depending on which alternative matched
+                if match.group(1):
+                    sec_num = match.group(1).strip()
+                    sec_title = " ".join(match.group(2).split())
+                    heading_full = f"Section {sec_num} {sec_title}"
+                else:
+                    sec_num = match.group(3).strip()
+                    sec_title = " ".join(match.group(4).split())
+                    heading_full = f"{sec_num} {sec_title}"
 
                 body_text = full_text[match.end():end_pos].strip()
 
-                if len(body_text) >= 30:
+                if len(body_text) >= 25:
                     sections.append(
                         ContractSection(
                             heading=heading_full,
@@ -115,7 +141,7 @@ class LegalDocumentIngester:
                         )
                     )
 
-        # Fallback if no numbered headings matched
+        # Fallback only if no recognized headings matched
         if not sections:
             blocks = [b.strip() for b in full_text.split("\n\n") if len(b.strip()) >= 50]
             for idx, block in enumerate(blocks, 1):
@@ -148,7 +174,7 @@ if __name__ == "__main__":
 
         print(f"[✓] Successfully segmented {len(extracted_sections)} sections.\n")
 
-        for idx, sec in enumerate(extracted_sections[:5], 1):
+        for idx, sec in enumerate(extracted_sections[:8], 1):
             print(f"--- [Section {idx}] Heading: {sec.heading} ---")
             print(f"Character Span: [{sec.char_start} : {sec.char_end}]")
             print(f"Body Preview: {sec.body[:150]}...\n")
