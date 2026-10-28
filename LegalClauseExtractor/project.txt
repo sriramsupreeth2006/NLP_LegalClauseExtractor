@@ -43,4 +43,44 @@ Combined sparse text features and dense domain metrics via FeatureUnion into a s
 the fitted transformer to vectorizer.joblib for identical feature mapping during model training and unseen contract inference.
 
 
-ste
+
+
+step 4 model training done and added one more contract to improve model training
+[*] Loading training corpus from: clauses_dataset.csv
+[+] Total samples available: 146
+
+[+] Sample breakdown per category:
+label
+General/Boilerplate        84
+Termination                18
+Confidentiality            17
+Governing Law              12
+Indemnification             8
+Non-Compete                 6
+Limitation of Liability     1
+------------------------------------------------------------
+[!] Note: At least one class has < 2 samples. Running unstratified split.
+[*] Split sizes: Training = 116 | Validation = 30
+[*] Loading feature extraction pipeline from: vectorizer.joblib
+[*] Training Linear Support Vector Classifier with balanced class weights...
+[*] Setting up probability calibration...
+C:\Users\srira\AppData\Local\Programs\Python\Python312\Lib\site-packages\sklearn\model_selection\_split.py:812: UserWarning: The least populated class in y has only 1 members, which is less than n_splits=5.
+  warnings.warn(
+
+============================================================
+               MODEL VALIDATION METRICS
+============================================================
+                     precision    recall  f1-score   support
+
+    Confidentiality       0.00      0.00      0.00         3
+General/Boilerplate       0.83      0.75      0.79        20
+      Governing Law       0.40      1.00      0.57         2
+        Termination       0.67      0.80      0.73         5
+
+           accuracy                           0.70        30
+          macro avg       0.47      0.64      0.52        30
+       weighted avg       0.69      0.70      0.69        30
+
+============================================================
+[✓] Classifier successfully saved to: clause_model.joblib
+critical issue found - missing cues with heading limitation of liability which causes errors during testing on unseen contracts
