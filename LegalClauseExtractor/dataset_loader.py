@@ -22,47 +22,64 @@ class RealLegalDatasetManager:
 
     def infer_category(self, heading: str, body: str) -> str:
         """Heuristic rule-based taxonomy mapping to label real legal clauses."""
-        combined = f"{heading} {body}".lower()
+        h = str(heading).lower()
+        b = str(body).lower()
+        combined = f"{h} {b}"
 
-        # 1. Governing Law & Dispute Resolution
+        # 1. Limitation of Liability (Check heading and specific liability cap markers first)
+        if any(term in h for term in ["limitation of liability", "liability", "damages cap"]):
+            return "Limitation of Liability"
         if any(term in combined for term in [
-            "governing law", "jurisdiction", "place of execution", 
-            "courts at", "laws of india", "arbitration and conciliation",
-            "dispute resolution"
-        ]):
-            return "Governing Law"
-
-        # 2. Termination & Default
-        if any(term in combined for term in [
-            "events of defaults", "termination", "cancel/withdraw", 
-            "cancellation", "condition of default", "refund to the allottee"
-        ]):
-            return "Termination"
-
-        # 3. Indemnification & Defect Liability
-        if any(term in combined for term in [
-            "indemnify", "indemnification", "hold harmless", "defect liability",
-            "defective title", "compensate the allottee", "structural defect"
-        ]):
-            return "Indemnification"
-
-        # 4. Limitation of Liability
-        if any(term in combined for term in [
-            "limitation of liability", "indirect damages", 
-            "consequential damages", "liability cap", "shall not exceed"
+            "limitation of liability", "consequential damages", "punitive damages",
+            "indirect damages", "exemplary or punitive", "liability cap",
+            "will not exceed", "shall not exceed", "in no event shall either party be liable",
+            "total liability of all kinds"
         ]):
             return "Limitation of Liability"
 
-        # 5. Confidentiality & Non-Disclosure
+        # 2. Confidentiality & Non-Disclosure
+        if any(term in h for term in ["confidentiality", "non-disclosure", "confidential"]):
+            return "Confidentiality"
         if any(term in combined for term in [
-            "confidential", "proprietary information", 
-            "non-disclosure", "trade secrets"
+            "confidential information", "proprietary information", 
+            "trade secrets", "refrain from disclosing"
         ]):
             return "Confidentiality"
 
+        # 3. Governing Law & Dispute Resolution
+        if any(term in h for term in ["governing law", "jurisdiction", "dispute resolution"]):
+            return "Governing Law"
+        if any(term in combined for term in [
+            "governing law", "jurisdiction", "place of execution", 
+            "courts at", "laws of india", "arbitration and conciliation",
+            "dispute resolution", "laws of the state of", "court of competent jurisdiction"
+        ]):
+            return "Governing Law"
+
+        # 4. Indemnification & Defect Liability
+        if any(term in h for term in ["indemnification", "indemnity", "defect liability"]):
+            return "Indemnification"
+        if any(term in combined for term in [
+            "defend, indemnify", "indemnify and hold", "hold harmless",
+            "defect liability", "defective title", "compensate the allottee",
+            "structural defect"
+        ]):
+            return "Indemnification"
+
+        # 5. Termination & Default
+        if any(term in h for term in ["termination", "default"]):
+            return "Termination"
+        if any(term in combined for term in [
+            "events of defaults", "termination", "cancel/withdraw", 
+            "cancellation", "condition of default", "refund to the allottee",
+            "fails to cure such breach", "adjudicated a bankrupt"
+        ]):
+            return "Termination"
+
         # 6. Non-Compete & Restraint of Trade
         if any(term in combined for term in [
-            "non-compete", "solicit", "restraint of trade", "competing business"
+            "non-compete", "solicit", "restraint of trade", "competing business",
+            "similar to, or competitive with"
         ]):
             return "Non-Compete"
 
@@ -80,7 +97,6 @@ class RealLegalDatasetManager:
             with open(self.dataset_path, mode="r", encoding="utf-8") as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    # Signature based on the first 80 characters of clause text
                     existing_signatures.add(row["clause_text"][:80].strip())
 
         for file_path in contract_files:
@@ -108,7 +124,6 @@ class RealLegalDatasetManager:
             print("[*] No new clauses were added (dataset is already up to date).")
             return
 
-        # Write or append records to CSV
         file_exists = self.dataset_path.exists()
         with open(self.dataset_path, mode="a" if file_exists else "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
