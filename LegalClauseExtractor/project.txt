@@ -84,3 +84,43 @@ General/Boilerplate       0.83      0.75      0.79        20
 ============================================================
 [✓] Classifier successfully saved to: clause_model.joblib
 critical issue found - missing cues with heading limitation of liability which causes errors during testing on unseen contracts
+issue fixed for now
+[*] Loading training corpus from: clauses_dataset.csv
+[+] Total samples available: 118
+
+[+] Sample breakdown per category:
+label
+General/Boilerplate        83
+Governing Law               8
+Termination                 6
+Non-Compete                 6
+Limitation of Liability     6
+Indemnification             5
+Confidentiality             4
+------------------------------------------------------------
+[*] Split sizes: Training = 94 | Validation = 24
+[*] Loading feature extraction pipeline from: vectorizer.joblib
+[*] Training Linear Support Vector Classifier with balanced class weights...
+[*] Setting up probability calibration...
+C:\Users\srira\AppData\Local\Programs\Python\Python312\Lib\site-packages\sklearn\model_selection\_split.py:812: UserWarning: The least populated class in y has only 3 members, which is less than n_splits=5.
+  warnings.warn(
+
+============================================================
+               MODEL VALIDATION METRICS
+============================================================
+                         precision    recall  f1-score   support
+
+        Confidentiality       0.00      0.00      0.00         1
+    General/Boilerplate       0.71      1.00      0.83        17
+          Governing Law       0.00      0.00      0.00         2
+        Indemnification       0.00      0.00      0.00         1
+Limitation of Liability       0.00      0.00      0.00         1
+            Non-Compete       0.00      0.00      0.00         1
+            Termination       0.00      0.00      0.00         1
+
+               accuracy                           0.71        24
+              macro avg       0.10      0.14      0.12        24
+           weighted avg       0.50      0.71      0.59        24
+
+============================================================
+[✓] Classifier successfully saved to: clause_model.joblib
