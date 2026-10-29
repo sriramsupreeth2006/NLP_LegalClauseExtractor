@@ -168,3 +168,6 @@ Limitation of Liability       0.67      0.33      0.44         6
 
 [*] Training final production model on all 118 samples...
 [✓] Final model successfully saved to: clause_model.joblib
+
+
+4 steps done so far and results are promising, now moving on to testing step and checking results
