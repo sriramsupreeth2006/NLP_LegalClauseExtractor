@@ -124,3 +124,9 @@ Limitation of Liability       0.00      0.00      0.00         1
 
 ============================================================
 [✓] Classifier successfully saved to: clause_model.joblib
+Another critical issue surfaced - Evaluating on a tiny 24-sample split forces rare classes down to 1 or 0 test instances, 
+generating misleading 0.00 metrics due to split noise.
+Simultaneously, CalibratedClassifierCV fails mathematically on classes with only 3 training members, collapsing probability boundaries 
+and predicting the majority class (General/Boilerplate) for everything.
+need to fix the issue by changing the approach of the model_train.py code to K Fold approach to classify even the minority
+classes.
