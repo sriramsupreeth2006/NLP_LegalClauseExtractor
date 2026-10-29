@@ -1,18 +1,11 @@
 import sys
 from pathlib import Path
 import joblib
+import numpy as np
 import pandas as pd
 from sklearn.metrics import classification_report
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import StratifiedKFold
 from sklearn.svm import LinearSVC
-
-# Check for modern scikit-learn FrozenEstimator vs standard calibration
-try:
-    from sklearn.calibration import CalibratedClassifierCV, FrozenEstimator
-    HAS_FROZEN = True
-except ImportError:
-    from sklearn.calibration import CalibratedClassifierCV
-    HAS_FROZEN = False
 
 from vectorizer_pipeline import LegalClauseVectorizer, LegalDomainFeatureExtractor
 
@@ -21,7 +14,6 @@ def train_clause_model(
     dataset_csv: str = "clauses_dataset.csv",
     vectorizer_path: str = "vectorizer.joblib",
     model_output: str = "clause_model.joblib",
-    test_size: float = 0.2,
     random_state: int = 42
 ):
     csv_file = Path(dataset_csv)
@@ -30,94 +22,73 @@ def train_clause_model(
     if not csv_file.exists():
         raise FileNotFoundError(f"[!] Dataset not found: {csv_file}")
     if not vec_file.exists():
-        raise FileNotFoundError(
-            f"[!] Vectorizer artifact not found: {vec_file}. Run vectorizer_pipeline.py first."
-        )
+        raise FileNotFoundError(f"[!] Vectorizer artifact not found: {vec_file}")
 
-    # 1. Load dataset
     print(f"[*] Loading training corpus from: {csv_file.name}")
-    df = pd.read_csv(csv_file)
-    df = df.dropna(subset=["clause_text", "label"])
+    df = pd.read_csv(csv_file).dropna(subset=["clause_text", "label"])
     df["clause_text"] = df["clause_text"].astype(str).str.strip()
     df["label"] = df["label"].astype(str).str.strip()
 
-    print(f"[+] Total samples available: {len(df)}")
-    print("\n[+] Sample breakdown per category:")
-    counts = df["label"].value_counts()
-    print(counts.to_string())
-    print("-" * 60)
+    print(f"[+] Total usable samples: {len(df)}")
+    print("\n[+] Corpus category distribution:")
+    class_counts = df["label"].value_counts()
+    print(class_counts.to_string())
+    print("-" * 65)
 
-    # 2. Split dataset
-    can_stratify = counts.min() >= 2
-    if can_stratify:
-        X_train_raw, X_val_raw, y_train, y_val = train_test_split(
-            df["clause_text"],
-            df["label"],
-            test_size=test_size,
-            random_state=random_state,
-            stratify=df["label"]
-        )
-    else:
-        print("[!] Note: At least one class has < 2 samples. Running unstratified split.")
-        X_train_raw, X_val_raw, y_train, y_val = train_test_split(
-            df["clause_text"],
-            df["label"],
-            test_size=test_size,
-            random_state=random_state
-        )
-
-    print(f"[*] Split sizes: Training = {len(X_train_raw)} | Validation = {len(X_val_raw)}")
-
-    # 3. Transform data using the hybrid pipeline
+    # 1. Feature extraction using existing 17k-dimensional pipeline
     print(f"[*] Loading feature extraction pipeline from: {vec_file.name}")
     vec_pipeline = LegalClauseVectorizer.load(vec_file)
-    X_train = vec_pipeline.transform(X_train_raw)
-    X_val = vec_pipeline.transform(X_val_raw)
+    X = vec_pipeline.transform(df["clause_text"])
+    y = df["label"].values
 
-    # 4. Train balanced LinearSVC classifier
-    print("[*] Training Linear Support Vector Classifier with balanced class weights...")
-    base_svc = LinearSVC(
+    # 2. Determine K-Fold splits bounded by the smallest class
+    min_class_count = int(class_counts.min())
+    n_splits = max(2, min(min_class_count, 4))
+    print(f"[*] Executing {n_splits}-Fold Stratified Cross-Validation on all {len(df)} clauses...")
+
+    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+    oof_predictions = np.empty(len(df), dtype=object)
+
+    for fold, (train_idx, val_idx) in enumerate(skf.split(X, y), 1):
+        X_train_f, X_val_f = X[train_idx], X[val_idx]
+        y_train_f = y[train_idx]
+
+        clf_fold = LinearSVC(
+            C=1.0,
+            loss="squared_hinge",
+            class_weight="balanced",
+            random_state=random_state,
+            max_iter=5000
+        )
+        clf_fold.fit(X_train_f, y_train_f)
+        oof_predictions[val_idx] = clf_fold.predict(X_val_f)
+
+    # 3. Print full out-of-fold metrics across all 118 clauses
+    print("\n" + "=" * 65)
+    print(f"   STRATIFIED OUT-OF-FOLD EVALUATION METRICS (TOTAL N={len(df)})")
+    print("=" * 65)
+    print(classification_report(y, oof_predictions, zero_division=0))
+    print("=" * 65)
+
+    # 4. Train final production classifier on 100% of available data
+    print("\n[*] Training final production model on all 118 samples...")
+    final_svc = LinearSVC(
         C=1.0,
         loss="squared_hinge",
         class_weight="balanced",
         random_state=random_state,
-        max_iter=4000
+        max_iter=5000
     )
-    base_svc.fit(X_train, y_train)
+    final_svc.fit(X, y)
 
-    # 5. Probability Calibration without cv='prefit'
-    print("[*] Setting up probability calibration...")
-    if HAS_FROZEN:
-        # Modern scikit-learn (1.4+)
-        calibrated_clf = CalibratedClassifierCV(estimator=FrozenEstimator(base_svc))
-        calibrated_clf.fit(X_train, y_train)
-    else:
-        # Fallback if FrozenEstimator is unavailable
-        try:
-            calibrated_clf = CalibratedClassifierCV(estimator=base_svc, cv="prefit")
-            calibrated_clf.fit(X_train, y_train)
-        except Exception:
-            # If cross-validation calibration fails due to single-instance class, use base_svc directly
-            calibrated_clf = base_svc
-
-    # 6. Model evaluation on validation split
-    y_pred = calibrated_clf.predict(X_val)
-
-    print("\n" + "=" * 60)
-    print("               MODEL VALIDATION METRICS")
-    print("=" * 60)
-    print(classification_report(y_val, y_pred, zero_division=0))
-    print("=" * 60)
-
-    # 7. Serialize trained model and metadata
-    classes = list(getattr(calibrated_clf, "classes_", getattr(base_svc, "classes_", [])))
+    # 5. Serialize final model artifact
     model_artifact = {
-        "classifier": calibrated_clf,
-        "classes": classes,
+        "classifier": final_svc,
+        "classes": list(final_svc.classes_),
         "vectorizer_path": str(vec_file)
     }
     joblib.dump(model_artifact, model_output)
-    print(f"[✓] Classifier successfully saved to: {model_output}\n")
+    print(f"[✓] Final model successfully saved to: {model_output}\n")
 
 
 if __name__ == "__main__":

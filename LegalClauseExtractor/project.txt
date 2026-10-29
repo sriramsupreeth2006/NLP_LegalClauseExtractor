@@ -130,3 +130,41 @@ Simultaneously, CalibratedClassifierCV fails mathematically on classes with only
 and predicting the majority class (General/Boilerplate) for everything.
 need to fix the issue by changing the approach of the model_train.py code to K Fold approach to classify even the minority
 classes.
+issue fixed and results show improvement
+[*] Loading training corpus from: clauses_dataset.csv
+[+] Total usable samples: 118
+
+[+] Corpus category distribution:
+label
+General/Boilerplate        83
+Governing Law               8
+Termination                 6
+Non-Compete                 6
+Limitation of Liability     6
+Indemnification             5
+Confidentiality             4
+-----------------------------------------------------------------
+[*] Loading feature extraction pipeline from: vectorizer.joblib
+[*] Executing 4-Fold Stratified Cross-Validation on all 118 clauses...
+
+=================================================================
+   STRATIFIED OUT-OF-FOLD EVALUATION METRICS (TOTAL N=118)
+=================================================================
+                         precision    recall  f1-score   support
+
+        Confidentiality       0.00      0.00      0.00         4
+    General/Boilerplate       0.83      0.95      0.89        83
+          Governing Law       0.80      0.50      0.62         8
+        Indemnification       0.80      0.80      0.80         5
+Limitation of Liability       0.67      0.33      0.44         6
+            Non-Compete       0.60      0.50      0.55         6
+            Termination       0.60      0.50      0.55         6
+
+               accuracy                           0.81       118
+              macro avg       0.61      0.51      0.55       118
+           weighted avg       0.77      0.81      0.78       118
+
+=================================================================
+
+[*] Training final production model on all 118 samples...
+[✓] Final model successfully saved to: clause_model.joblib
